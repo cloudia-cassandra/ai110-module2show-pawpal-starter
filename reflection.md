@@ -62,10 +62,18 @@ Second, when reviewing the class skeleton in `pawpal_system.py`, I found two mis
 - How did you use AI tools during this project (for example: design brainstorming, debugging, refactoring)?
 - What kinds of prompts or questions were most helpful?
 
+I used Claude Code at every stage of the design and build. First I had it read the scenario and suggest the three core actions a user should be able to perform. Then I had it brainstorm the classes with their attributes and methods, turn that into a Mermaid UML diagram, and generate class stubs in `pawpal_system.py`. After that, it wrote the full implementation, a demo script (`main.py`), and the first tests.
+
+The most helpful prompts asked the AI to review its own work instead of just producing more. Examples were "Review the diagram. Ensure relationships make sense and that you haven't included unnecessary complexity" and "Do you notice any missing relationships or potential logic bottlenecks?" These prompts found real problems that a "write the code" prompt would have skipped right past. Asking a specific question also helped, like "How should the Scheduler retrieve all tasks from the Owner's pets?" It led directly to `Owner.get_all_tasks()`, so the scheduler works across all pets instead of just one.
+
 **b. Judgment and verification**
 
 - Describe one moment where you did not accept an AI suggestion as-is.
 - How did you evaluate or verify what the AI suggested?
+
+I didn't accept the AI's first class design as-is. The first brainstorm included getter and setter methods, a vague `preferences` dictionary, and fields like `age`, `special_needs`, and `category`. Nothing in the scheduler would ever use them. When I asked for a review aimed at unnecessary complexity, those were removed. The review of the skeleton also found two gaps that the first design missed. Tasks didn't record which pet they belonged to, and weekly tasks had no way to tell whether they were due. Both were fixed before any logic was written.
+
+I verified the implementation by running it rather than just reading it. The first version of the scheduler put a task marked "prefers evening" at 08:50 in the morning. That was easy to spot in the printed schedule but hard to see in the code, so the scheduler was changed to wait until 17:00 for evening tasks and 12:00 for afternoon tasks. I ran `main.py` again to confirm the fix. I also checked that an invalid priority like "urgent" raises an error. Finally, I ran the tests with plain `pytest`, the command the README uses. That showed the tests couldn't import the module, which was fixed by adding a `pytest.ini`.
 
 ---
 

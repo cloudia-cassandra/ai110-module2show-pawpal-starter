@@ -42,16 +42,38 @@ pip install -r requirements.txt
 6. Connect your logic to the Streamlit UI in `app.py`.
 7. Refine UML so it matches what you actually built.
 
+## 🏗️ Implementation Summary
+
+The scheduling logic lives in [`pawpal_system.py`](pawpal_system.py). It has five classes:
+
+- **`Task`** is one care activity. It has a title, a duration, a priority (low/medium/high), an optional preferred part of the day, an optional fixed start time, a daily or weekly frequency, and whether it has been completed. It checks its own values when it is created and can tell whether it is due on a given day.
+- **`Pet`** holds a pet's name, species, and list of tasks. It adds, finds, edits, and removes tasks, and tags each task with the pet's name.
+- **`Owner`** holds the owner's name, how many minutes they have for pet care, when their day starts, and their pets. `get_all_tasks()` returns every pet's tasks in one list.
+- **`Scheduler`** builds the plan. It gets tasks from `Owner.get_all_tasks()`, keeps the ones due today, and then:
+  1. picks tasks in priority order until the owner's time runs out, and records why any task was skipped;
+  2. places fixed-time tasks exactly at their time;
+  3. places the rest one after another from the start of the day, waiting for their preferred part of the day (afternoon from 12:00, evening from 17:00) and moving past fixed-time tasks;
+  4. warns about any overlapping tasks.
+- **`DailyPlan`** is the result: scheduled tasks with start times and reasons, skipped tasks with reasons, and warnings. `explain()` turns it into readable text.
+
+[`main.py`](main.py) is a terminal demo with one owner and two pets. The class diagram is in [`diagrams/uml.mmd`](diagrams/uml.mmd).
+
 ## 🖥️ Sample Output
 
-Paste a sample of your app's CLI or Streamlit output here so a reader can see what a generated plan looks like:
+Output of `python main.py` (one owner, two pets, six tasks, 90 minutes available):
 
 ```
-# e.g.:
-# Daily plan for Biscuit (Golden Retriever):
-#   08:00 — Morning walk (30 min) [priority: high]
-#   09:00 — Feeding (10 min) [priority: high]
-#   ...
+============================================================
+Today's Schedule for Jordan's pets
+============================================================
+Plan for 2026-10-18 (80 min scheduled)
+  07:30-08:00  Morning walk for Mochi (30 min, high): high priority, prefers morning
+  08:00-08:05  Heartworm meds for Mochi (5 min, high): high priority, fixed time
+  08:15-08:25  Breakfast for Luna (10 min, high): high priority, fixed time
+  12:00-12:20  Brush coat for Luna (20 min, medium): medium priority, prefers afternoon
+  17:00-17:15  Puzzle toy for Mochi (15 min, medium): medium priority, prefers evening
+Skipped:
+  Bath for Mochi: not enough time (45 min needed, 10 min left)
 ```
 
 ## 🧪 Testing PawPal+

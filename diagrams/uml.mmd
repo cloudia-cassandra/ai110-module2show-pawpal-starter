@@ -1,5 +1,5 @@
 classDiagram
-    %% PawPal+ draft UML. Keep this file updated so it matches the final implementation.
+    %% PawPal+ UML. Keep this file updated so it matches the final implementation.
 
     class Owner {
         +str name
@@ -7,6 +7,8 @@ classDiagram
         +str day_start
         +list~Pet~ pets
         +add_pet(pet: Pet) None
+        +find_pet(name: str) Pet
+        +get_all_tasks() list~Task~
     }
 
     class Pet {
@@ -14,6 +16,7 @@ classDiagram
         +str species
         +list~Task~ tasks
         +add_task(task: Task) None
+        +find_task(title: str) Task
         +remove_task(title: str) None
         +edit_task(title: str, changes: dict) None
     }
@@ -23,6 +26,7 @@ classDiagram
         +int duration_minutes
         +str priority
         +str preferred_time
+        +str start_time
         +str frequency
         +bool completed
         +date last_completed
@@ -39,12 +43,14 @@ classDiagram
         +sort_tasks(tasks: list~Task~) list~Task~
         +generate_plan() DailyPlan
         +detect_conflicts(plan: DailyPlan) list~str~
+        +mark_task_complete(pet_name: str, title: str) None
     }
 
     class DailyPlan {
         +date date
         +list~tuple~ entries
         +list~tuple~ skipped
+        +list~str~ warnings
         +add_entry(task: Task, start_time: str, reason: str) None
         +skip(task: Task, reason: str) None
         +total_minutes() int
@@ -53,6 +59,6 @@ classDiagram
 
     Owner "1" --> "1..*" Pet : has
     Pet "1" *-- "0..*" Task : has
-    Scheduler --> Owner : reads constraints from
+    Scheduler --> Owner : get_all_tasks()
     Scheduler ..> DailyPlan : creates
     DailyPlan --> "0..*" Task : schedules / skips
