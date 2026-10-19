@@ -1,15 +1,64 @@
 classDiagram
-    %% Replace the placeholders below with your actual classes, attributes, methods, and relationships.
-    %% Keep this file updated so it matches your final implementation.
+    %% PawPal+ draft UML. Keep this file updated so it matches the final implementation.
 
-    class ClassName {
-        +type attribute
-        +method() returnType
+    class Owner {
+        +str name
+        +int available_minutes
+        +str day_start
+        +dict preferences
+        +list~Pet~ pets
+        +add_pet(pet: Pet) None
+        +get_pets() list~Pet~
+        +update_availability(minutes: int) None
     }
 
-    class AnotherClass {
-        +type attribute
-        +method() returnType
+    class Pet {
+        +str name
+        +str species
+        +int age
+        +list~str~ special_needs
+        +list~Task~ tasks
+        +add_task(task: Task) None
+        +remove_task(title: str) None
+        +edit_task(title: str, changes: dict) None
+        +get_tasks() list~Task~
     }
 
-    ClassName --> AnotherClass : relationship
+    class Task {
+        +str title
+        +int duration_minutes
+        +str priority
+        +str category
+        +str preferred_time
+        +str frequency
+        +bool completed
+        +priority_rank() int
+        +is_due_today(day: date) bool
+        +mark_complete() None
+    }
+
+    class Scheduler {
+        +Owner owner
+        +date date
+        +collect_tasks() list~Task~
+        +sort_tasks(tasks: list~Task~) list~Task~
+        +generate_plan() DailyPlan
+        +detect_conflicts(plan: DailyPlan) list~str~
+    }
+
+    class DailyPlan {
+        +date date
+        +list~tuple~ entries
+        +list~tuple~ skipped
+        +add_entry(task: Task, start_time: str, reason: str) None
+        +skip(task: Task, reason: str) None
+        +total_minutes() int
+        +explain() str
+        +display() str
+    }
+
+    Owner "1" --> "1..*" Pet : owns
+    Pet "1" --> "0..*" Task : has
+    Scheduler --> Owner : reads constraints from
+    Scheduler ..> DailyPlan : creates
+    DailyPlan --> "0..*" Task : schedules / skips
