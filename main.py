@@ -1,5 +1,6 @@
 """Demo script: build a sample owner with two pets, then sort, filter, and schedule their tasks."""
 
+from dataclasses import replace
 from datetime import date
 
 from pawpal_system import Owner, Pet, Scheduler, Task
@@ -36,6 +37,9 @@ def main() -> None:
     luna.add_task(Task("Brush coat", 20, "medium", preferred_time="afternoon"))
     mochi.add_task(Task("Heartworm meds", 5, "high", start_time="08:00"))
     mochi.add_task(Task("Morning walk", 30, "high", preferred_time="morning"))
+    # Where priority and time disagree, to show sort_by_priority() differing from sort_by_time():
+    mochi.add_task(Task("Brush teeth", 5, "low", start_time="07:00"))  # earliest task, but low priority
+    luna.add_task(Task("Evening meds", 5, "high", start_time="20:00"))  # latest task, but high priority
     # Deliberate clashes, to show conflict warnings:
     mochi.add_task(Task("Breakfast", 10, "high", start_time="08:15"))  # same time as Luna's breakfast
     luna.add_task(Task("Litter box", 5, "medium", start_time="08:20"))  # during Luna's own breakfast
@@ -44,6 +48,7 @@ def main() -> None:
 
     print_tasks("Unsorted (each pet's tasks in the order added):", scheduler, owner.get_all_tasks())
     print_tasks("Sorted by time:", scheduler, scheduler.sort_by_time(owner.get_all_tasks()))
+    print_tasks("Sorted by priority, then time:", scheduler, scheduler.sort_by_priority(owner.get_all_tasks()))
     print_tasks("Only Luna's tasks:", scheduler, scheduler.filter_tasks(pet_name="Luna"))
 
     # Completing a recurring task automatically adds its next occurrence.
@@ -56,12 +61,30 @@ def main() -> None:
         scheduler.sort_by_time(scheduler.filter_tasks(pet_name="Mochi", completed=False)),
     )
 
-    plan = Scheduler(owner, DEMO_DAY).generate_plan()
+    planner = Scheduler(owner, DEMO_DAY)
+    plan = planner.generate_plan()
     print()
     print("=" * 60)
     print(f"Today's Schedule for {owner.name}'s pets")
     print("=" * 60)
     print(plan.explain())
+
+    # Next available slot: new times that clear every clash without creating new ones.
+    print("\nSuggested fix for the clashes:")
+    for task, old_start, new_start in planner.suggest_moves(plan):
+        print(f"  Move {task.title} for {task.pet_name} from {old_start} to {new_start or '(no free time left today)'}")
+    print(f"Next free 20-minute slot after 09:00: {planner.find_next_slot(plan, 20, earliest='09:00')}")
+
+    # Priority-based scheduling on a tight day: tasks are chosen by priority, earliest first within a priority.
+    tight_plan = Scheduler(replace(owner, available_minutes=25), DEMO_DAY).generate_plan()
+    print()
+    print("=" * 60)
+    print("Tight day: same tasks, only 25 minutes")
+    print("=" * 60)
+    print("Choosing order:", ", ".join(
+        f"{t.title} ({t.pet_name}, {t.priority})" for t in planner.sort_by_priority(planner.collect_tasks())
+    ))
+    print(tight_plan.explain())
 
 
 if __name__ == "__main__":

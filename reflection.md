@@ -115,7 +115,7 @@ Using a separate chat session for each phase kept each conversation focused on o
 - What behaviors did you test?
 - Why were these tests important?
 
-The test suite has 27 tests in `tests/test_pawpal.py`, covering both normal use and edge cases:
+The test suite has 49 tests in `tests/test_pawpal.py`, covering both normal use and edge cases:
 
 - **Sorting:** tasks come out in time order with untimed tasks last; tasks at the same time put higher priority first; `"HIGH"` is treated as `"high"`.
 - **Building the plan:** an owner with no pets or a pet with no tasks gets an empty plan without crashing; a task that uses exactly the remaining minutes is still scheduled; with 0 minutes everything is skipped with a reason.
@@ -131,7 +131,7 @@ These tests matter because the scheduler's mistakes are quiet. A wrong plan stil
 - How confident are you that your scheduler works correctly?
 - What edge cases would you test next if you had more time?
 
-I'd rate my confidence at 4 out of 5. All 27 tests pass, and they cover every scheduling feature, including the cases most likely to break it. I also ran the Streamlit app headlessly through a full workflow and the terminal demo, and both matched what the tests promise. I held back the fifth star because the Streamlit UI has no automated tests of its own, and because the greedy approach is a choice I tested rather than proved to be the best one.
+I'd rate my confidence at 4 out of 5. All 49 tests pass, and they cover every scheduling feature, including the cases most likely to break it. I also ran the Streamlit app headlessly through a full workflow and the terminal demo, and both matched what the tests promise. I held back the fifth star because the Streamlit UI has no automated tests of its own, and because the greedy approach is a choice I tested rather than proved to be the best one.
 
 If I had more time, I would test:
 
@@ -149,7 +149,7 @@ If I had more time, I would test:
 
 - What part of this project are you most satisfied with?
 
-I'm most satisfied with how conflicts are handled from start to finish. The scheduler doesn't just say "conflict". It checks real overlaps, not only identical start times, says whether the clash is for the same pet or different pets, and keeps both tasks so the owner decides. In the app, the clashing rows are marked ⚠️ and each clash comes with a specific fix, like "Try moving Litter box to 08:25 or later." The `find_overlaps()` method also keeps that logic in one place, so the warnings, the UI and the tests all agree. I'm also happy that every scheduled or skipped task gets a reason, so the plan never feels like a black box.
+I'm most satisfied with how conflicts are handled from start to finish. The scheduler doesn't just say "conflict". It checks real overlaps, not only identical start times, says whether the clash is for the same pet or different pets, and keeps both tasks so the owner decides. In the app, the clashing rows are marked ⚠️ and a suggested fix gives new times for every clash that don't clash with each other, like moving Luna's Breakfast to 08:25 and the Litter box to 08:35, which can be applied with one click. The `find_overlaps()` method also keeps that logic in one place, so the warnings, the UI and the tests all agree. I'm also happy that every scheduled or skipped task gets a reason, so the plan never feels like a black box.
 
 **b. What you would improve**
 
@@ -158,7 +158,6 @@ I'm most satisfied with how conflicts are handled from start to finish. The sche
 - **Give tasks IDs instead of finding them by title.** Looking tasks up by title works for a demo, but it gets confusing with duplicate titles or recurring tasks that leave completed copies behind.
 - **Always include fixed-time, high-priority tasks.** Medication at a set time should probably never be skipped for a long walk. I'd schedule fixed-time tasks first and only fit the flexible ones around them.
 - **Edit and remove tasks in the app.** `Pet.edit_task()` and `remove_task()` exist in the backend, but the UI can only add tasks, so the only way to fix a clash is to add the task again at a new time.
-- **Save data between sessions.** Everything lives in Streamlit's session state, so refreshing the page loses all pets and tasks. Saving to a JSON file would fix this.
 - **Display times past midnight properly**, so a task ending at 00:25 doesn't show as "24:25".
 
 **c. Key takeaway**

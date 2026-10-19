@@ -1,6 +1,8 @@
 classDiagram
     %% PawPal+ final UML: matches pawpal_system.py after Phase 3 (sorting, filtering,
-    %% recurring tasks, conflict detection) and the conflict UI in app.py.
+    %% recurring tasks, conflict detection), the next-available-slot finder (Challenge 1),
+    %% JSON persistence (Challenge 2), priority-then-time
+    %% scheduling (Challenge 3) and the conflict UI in app.py.
 
     class Owner {
         +str name
@@ -10,6 +12,10 @@ classDiagram
         +add_pet(pet: Pet) None
         +find_pet(name: str) Pet
         +get_all_tasks() list~Task~
+        +to_dict() dict
+        +from_dict(data: dict)$ Owner
+        +save_to_json(path: str) None
+        +load_from_json(path: str)$ Owner
     }
 
     class Pet {
@@ -38,20 +44,26 @@ classDiagram
         +is_due_today(day: date) bool
         +next_occurrence(day: date) Task
         +mark_complete(day: date) Task
+        +to_dict() dict
+        +from_dict(data: dict)$ Task
     }
 
     class Scheduler {
         +Owner owner
         +date date
         +collect_tasks() list~Task~
-        +sort_tasks(tasks: list~Task~) list~Task~
         +task_time(task: Task) Optional~str~
+        +task_minutes(task: Task) int
+        +sort_by_priority(tasks: list~Task~) list~Task~
         +sort_by_time(tasks: list~Task~) list~Task~
         +filter_tasks(pet_name: Optional~str~, completed: Optional~bool~) list~Task~
         +generate_plan() DailyPlan
         +plan_slots(plan: DailyPlan) list~tuple~
         +find_overlaps(plan: DailyPlan) list~tuple~
         +detect_conflicts(plan: DailyPlan) list~str~
+        -_first_gap(busy: list~tuple~, duration: int, earliest: int) Optional~int~
+        +find_next_slot(plan: DailyPlan, duration_minutes: int, earliest: Optional~str~, ignore: Optional~Task~) Optional~str~
+        +suggest_moves(plan: DailyPlan) list~tuple~
         +mark_task_complete(pet_name: str, title: str) Task
     }
 
@@ -73,6 +85,8 @@ classDiagram
         +RECURRENCE_GAP: dict
         +TIME_OF_DAY_ORDER: dict
         +TIME_OF_DAY_START: dict
+        +DATA_VERSION: int
+        +DATE_FIELDS: tuple
         +to_minutes(hhmm: str) int
         +to_hhmm(minutes: int) str
     }
@@ -83,11 +97,12 @@ classDiagram
     Scheduler "1" --> "1" Owner : reads tasks via get_all_tasks()
     Scheduler ..> Pet : mark_task_complete() adds next occurrence
     Scheduler ..> Task : sorts, filters, places
-    Scheduler ..> DailyPlan : creates, checks for overlaps
+    Scheduler ..> DailyPlan : creates, checks for overlaps, finds free slots
     DailyPlan "1" o-- "0..*" Task : entries / skipped
     Scheduler ..> pawpal_system : time helpers and constants
     Task ..> pawpal_system : validation constants
 
+    note for Owner "save_to_json / load_from_json store the owner,\npets and tasks in data.json as {version, owner}."
     note for Task "Validated on creation (priority, frequency,\npreferred_time, duration, HH:MM start_time).\npet_name is set by Pet.add_task()."
     note for DailyPlan "entries: (start HH:MM, Task, reason)\nskipped: (Task, reason)"
-    note for Scheduler "plan_slots / find_overlaps use (start_min, end_min, Task).\napp.py uses find_overlaps() to mark clashing rows\nand suggest a new time."
+    note for Scheduler "plan_slots / find_overlaps use (start_min, end_min, Task).\napp.py uses find_overlaps() to mark clashing rows.\nfind_next_slot / suggest_moves find free gaps;\nsuggest_moves returns (task, old start, new start)\nand app.py applies them with Pet.edit_task()."

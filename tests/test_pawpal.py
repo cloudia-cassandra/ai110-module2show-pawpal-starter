@@ -1,5 +1,6 @@
 """Tests for the PawPal+ logic layer."""
 
+import json
 from datetime import date
 
 import pytest
@@ -154,7 +155,7 @@ def test_tasks_at_the_same_start_time_put_higher_priority_first():
     assert [t.title for t in ordered] == ["Meds", "Breakfast", "Brush teeth"]
 
 
-def test_sort_tasks_uses_priority_then_time_of_day_then_duration():
+def test_sort_by_priority_breaks_ties_by_time_of_day_then_duration():
     owner = owner_with(
         Task("Evening walk", 30, "high", preferred_time="evening"),
         Task("Long play", 40, "medium"),
@@ -164,11 +165,60 @@ def test_sort_tasks_uses_priority_then_time_of_day_then_duration():
     )
     scheduler = Scheduler(owner, date(2026, 10, 18))
 
-    ordered = scheduler.sort_tasks(owner.get_all_tasks())
+    ordered = scheduler.sort_by_priority(owner.get_all_tasks())
 
     assert [t.title for t in ordered] == [
         "Short morning walk", "Morning walk", "Evening walk", "Quick play", "Long play",
     ]
+
+
+def test_sort_by_priority_puts_priority_first_then_clock_time():
+    owner = owner_with(
+        Task("Low early", 10, "low", start_time="06:00"),
+        Task("High late", 10, "high", start_time="18:00"),
+        Task("Medium noon", 10, "medium", start_time="12:00"),
+        Task("High any time", 10, "high"),
+        Task("High early", 10, "high", start_time="07:00"),
+        Task("High morning", 10, "high", preferred_time="morning"),  # day starts 08:00
+        day_start="08:00",
+    )
+    scheduler = Scheduler(owner, date(2026, 10, 18))
+
+    ordered = scheduler.sort_by_priority(owner.get_all_tasks())
+
+    # A fixed 07:00 task now comes before a flexible morning (08:00) task of the same priority,
+    # and untimed tasks come last within their priority. Earlier low tasks never jump ahead.
+    assert [t.title for t in ordered] == [
+        "High early", "High morning", "High late", "High any time", "Medium noon", "Low early",
+    ]
+
+
+def test_tight_budget_keeps_the_earliest_task_within_the_same_priority():
+    owner = owner_with(
+        Task("Morning walk", 30, "high", preferred_time="morning"),  # 08:00
+        Task("Meds", 5, "high", start_time="07:00"),
+        minutes=30,
+    )
+
+    plan = Scheduler(owner, date(2026, 10, 18)).generate_plan()
+
+    # Both are high priority; Meds is earlier in the day, so it is chosen first and the walk no longer fits.
+    assert [t.title for _, t, _ in plan.entries] == ["Meds"]
+    assert [t.title for t, _ in plan.skipped] == ["Morning walk"]
+
+
+def test_priority_decides_what_is_skipped_regardless_of_time():
+    owner = owner_with(
+        Task("Early brush", 20, "low", start_time="07:00"),
+        Task("Late meds", 20, "high", start_time="20:00"),
+        Task("Noon play", 20, "medium", start_time="12:00"),
+        minutes=40,
+    )
+
+    plan = Scheduler(owner, date(2026, 10, 18)).generate_plan()
+
+    assert [t.title for _, t, _ in plan.entries] == ["Noon play", "Late meds"]  # shown in time order
+    assert [t.title for t, _ in plan.skipped] == ["Early brush"]
 
 
 def test_priority_is_case_insensitive():
@@ -341,3 +391,179 @@ def test_find_overlaps_returns_each_clashing_pair_earlier_task_first():
     assert [(a[2].title, b[2].title) for a, b in overlaps] == [("Breakfast", "Meds")]
     (a_start, a_end, _), (b_start, _, _) = overlaps[0]
     assert (to_hhmm(a_start), to_hhmm(a_end), to_hhmm(b_start)) == ("08:15", "08:25", "08:20")
+
+
+# --- Next available slot and suggested moves ---
+
+
+def plan_for(*tasks, minutes=240, day_start="08:00"):
+    """Return (scheduler, plan) for one pet with the given tasks."""
+    scheduler = Scheduler(owner_with(*tasks, minutes=minutes, day_start=day_start), date(2026, 10, 18))
+    return scheduler, scheduler.generate_plan()
+
+
+def test_next_slot_on_an_empty_plan_is_the_day_start():
+    scheduler, plan = plan_for(day_start="07:30")
+
+    assert scheduler.find_next_slot(plan, 30) == "07:30"
+
+
+def test_next_slot_skips_gaps_that_are_too_small():
+    scheduler, plan = plan_for(
+        Task("Meds", 5, "high", start_time="08:00"),
+        Task("Breakfast", 10, "high", start_time="08:15"),  # 08:05-08:15 is only a 10-minute gap
+    )
+
+    assert scheduler.find_next_slot(plan, 10) == "08:05"  # fits exactly
+    assert scheduler.find_next_slot(plan, 15) == "08:25"  # too big for the gap
+
+
+def test_next_slot_respects_earliest_and_overlapping_busy_times():
+    scheduler, plan = plan_for(
+        Task("Breakfast", 10, "high", start_time="08:15"),
+        Task("Litter box", 15, "medium", start_time="08:20"),  # overlaps Breakfast; busy until 08:35
+    )
+
+    assert scheduler.find_next_slot(plan, 5, earliest="08:16") == "08:35"
+    assert scheduler.find_next_slot(plan, 5, earliest="09:00") == "09:00"
+
+
+def test_next_slot_can_ignore_the_task_being_moved():
+    scheduler, plan = plan_for(Task("Breakfast", 10, "high", start_time="08:15"))
+    breakfast = plan.entries[0][1]
+
+    assert scheduler.find_next_slot(plan, 10, earliest="08:15") == "08:25"
+    assert scheduler.find_next_slot(plan, 10, earliest="08:15", ignore=breakfast) == "08:15"
+
+
+def test_next_slot_returns_none_when_nothing_fits_before_midnight():
+    scheduler, plan = plan_for(Task("Night walk", 30, "low", start_time="23:30"))
+
+    assert scheduler.find_next_slot(plan, 30, earliest="23:15") is None
+    with pytest.raises(ValueError):
+        scheduler.find_next_slot(plan, 0)
+
+
+def test_suggest_moves_clears_every_clash_without_creating_new_ones():
+    owner = Owner("Jordan", 120)
+    mochi, luna = Pet("Mochi", "dog"), Pet("Luna", "cat")
+    owner.add_pet(mochi)
+    owner.add_pet(luna)
+    mochi.add_task(Task("Breakfast", 10, "high", start_time="08:15"))
+    luna.add_task(Task("Breakfast", 10, "high", start_time="08:15"))
+    luna.add_task(Task("Litter box", 5, "medium", start_time="08:20"))
+    scheduler = Scheduler(owner, date(2026, 10, 18))
+    plan = scheduler.generate_plan()
+
+    moves = scheduler.suggest_moves(plan)
+
+    # Same priority and start: the second one moves. Medium Litter box moves rather than high Breakfast.
+    assert [(t.title, t.pet_name, old, new) for t, old, new in moves] == [
+        ("Breakfast", "Luna", "08:15", "08:25"),
+        ("Litter box", "Luna", "08:20", "08:35"),
+    ]
+    # Applying the moves leaves a plan with no warnings.
+    for task, _, new in moves:
+        owner.find_pet(task.pet_name).edit_task(task.title, {"start_time": new})
+    assert scheduler.generate_plan().warnings == []
+
+
+def test_suggest_moves_moves_the_lower_priority_task_even_if_it_starts_first():
+    scheduler, plan = plan_for(
+        Task("Brush", 20, "low", start_time="08:00"),
+        Task("Meds", 5, "high", start_time="08:10"),
+    )
+
+    assert [(t.title, old, new) for t, old, new in scheduler.suggest_moves(plan)] == [("Brush", "08:00", "08:15")]
+
+
+def test_suggest_moves_is_empty_without_clashes_and_reports_none_when_day_is_full():
+    scheduler, plan = plan_for(Task("Meds", 5, "high", start_time="08:00"))
+    assert scheduler.suggest_moves(plan) == []
+
+    scheduler, plan = plan_for(
+        Task("Night walk", 30, "high", start_time="23:30"),
+        Task("Night snack", 10, "low", start_time="23:40"),
+    )
+    assert [(t.title, new) for t, _, new in scheduler.suggest_moves(plan)] == [("Night snack", None)]
+
+
+# --- Saving and loading (data.json) ---
+
+
+def test_save_and_load_round_trip_keeps_pets_tasks_and_history(tmp_path):
+    owner = make_owner_with_tasks()
+    owner.find_pet("Mochi").add_task(Task("Bath", 45, "low", frequency="weekly"))  # duplicate title on purpose
+    Scheduler(owner, date(2026, 10, 18)).mark_task_complete("Luna", "Breakfast")
+    path = tmp_path / "data.json"
+
+    owner.save_to_json(path)
+    loaded = Owner.load_from_json(path)
+
+    assert loaded == owner  # every field of every pet and task, including dates and completed history
+    assert loaded.find_pet("Luna").find_task("Breakfast").due_date == date(2026, 10, 19)
+    assert all(task.pet_name == pet.name for pet in loaded.pets for task in pet.tasks)
+
+
+def test_loaded_owner_builds_the_same_plan(tmp_path):
+    owner = make_owner_with_tasks()
+    path = tmp_path / "data.json"
+    owner.save_to_json(path)
+
+    day = date(2026, 10, 18)
+    original = Scheduler(owner, day).generate_plan()
+    reloaded = Scheduler(Owner.load_from_json(path), day).generate_plan()
+
+    assert reloaded.explain() == original.explain()
+
+
+def test_saved_file_is_readable_json_with_iso_dates(tmp_path):
+    owner = owner_with(Task("Feeding", 10, "high"))
+    Scheduler(owner, date(2026, 10, 18)).mark_task_complete("Mochi", "Feeding")
+    path = tmp_path / "data.json"
+
+    owner.save_to_json(path)
+
+    saved = json.loads(path.read_text())
+    tasks = saved["owner"]["pets"][0]["tasks"]
+    assert saved["version"] == 1
+    assert tasks[0]["last_completed"] == "2026-10-18" and tasks[1]["due_date"] == "2026-10-19"
+    assert "pet_name" not in tasks[0]
+    assert [p.name for p in tmp_path.iterdir()] == ["data.json"]  # no temp file left behind
+
+
+def test_owner_with_no_pets_round_trips(tmp_path):
+    path = tmp_path / "data.json"
+    Owner("Jordan", 60, day_start="07:00").save_to_json(path)
+
+    assert Owner.load_from_json(path) == Owner("Jordan", 60, day_start="07:00")
+
+
+def test_loading_a_missing_file_raises_file_not_found(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        Owner.load_from_json(tmp_path / "data.json")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "not json",
+        '{"version": 99, "owner": {}}',  # unknown version
+        '{"version": 1}',  # missing owner
+        '{"version": 1, "owner": {"name": "J", "available_minutes": 60, "day_start": "08:00",'
+        ' "pets": [{"name": "Mochi", "species": "dog", "tasks": [{"title": "Walk", "duration_minutes": 30,'
+        ' "priority": "urgent"}]}]}}',  # invalid task value
+        '{"version": 1, "owner": {"name": "J", "available_minutes": 60, "day_start": "08:00",'
+        ' "pets": [{"name": "Mochi", "species": "dog", "tasks": [{"title": "Walk", "duration_minutes": 30,'
+        ' "priority": "high", "colour": "red"}]}]}}',  # unknown task field
+        '{"version": 1, "owner": {"name": "J", "available_minutes": 60, "day_start": "08:00",'
+        ' "pets": [{"name": "Mochi", "species": "dog", "tasks": [{"title": "Walk", "duration_minutes": 30,'
+        ' "priority": "high", "due_date": "tomorrow"}]}]}}',  # bad date
+    ],
+)
+def test_loading_bad_data_raises_value_error(tmp_path, text):
+    path = tmp_path / "data.json"
+    path.write_text(text)
+
+    with pytest.raises(ValueError, match="not valid PawPal\\+ data"):
+        Owner.load_from_json(path)

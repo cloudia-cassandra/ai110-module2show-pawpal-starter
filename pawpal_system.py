@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields, replace
+import json
+import os
+from dataclasses import asdict, dataclass, field, fields, replace
 from datetime import date, timedelta
 from itertools import combinations
-from typing import Optional
+from pathlib import Path
+from typing import Optional, Union
 
 PRIORITY_RANKS = {"low": 1, "medium": 2, "high": 3}
 FREQUENCIES = ("daily", "weekly")
@@ -15,6 +18,9 @@ RECURRENCE_GAP = {"daily": timedelta(days=1), "weekly": timedelta(weeks=1)}
 TIME_OF_DAY_ORDER = {"morning": 0, "afternoon": 1, "evening": 2, None: 3}
 # Earliest start for a flexible task with this preference ("morning" starts at the owner's day_start).
 TIME_OF_DAY_START = {"afternoon": "12:00", "evening": "17:00"}
+# Bumped if the data.json layout ever changes, so old files can be recognized.
+DATA_VERSION = 1
+DATE_FIELDS = ("due_date", "last_completed")
 
 
 def to_minutes(hhmm: str) -> int:
@@ -81,6 +87,24 @@ class Task:
         self.last_completed = day
         return self.next_occurrence(day)
 
+    def to_dict(self) -> dict:
+        """Return this task as JSON-ready data: dates become "YYYY-MM-DD" strings, pet_name is left out."""
+        data = asdict(self)
+        del data["pet_name"]  # rebuilt by Pet.add_task when loading
+        for name in DATE_FIELDS:
+            if data[name] is not None:
+                data[name] = data[name].isoformat()
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict) -> Task:
+        """Build a task from to_dict() data; the usual validation runs, so bad saved values raise ValueError."""
+        values = dict(data)
+        for name in DATE_FIELDS:
+            if values.get(name) is not None:
+                values[name] = date.fromisoformat(values[name])
+        return cls(**values)
+
 
 @dataclass
 class Pet:
@@ -146,6 +170,53 @@ class Owner:
         """Return every task across all of this owner's pets."""
         return [task for pet in self.pets for task in pet.tasks]
 
+    def to_dict(self) -> dict:
+        """Return the owner, their pets, and every task (including completed history) as JSON-ready data."""
+        return {
+            "name": self.name,
+            "available_minutes": self.available_minutes,
+            "day_start": self.day_start,
+            "pets": [
+                {"name": pet.name, "species": pet.species, "tasks": [task.to_dict() for task in pet.tasks]}
+                for pet in self.pets
+            ],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> Owner:
+        """Rebuild an owner from to_dict() data, adding tasks through Pet.add_task so each knows its pet."""
+        owner = cls(data["name"], data["available_minutes"], data["day_start"])
+        for pet_data in data["pets"]:
+            pet = Pet(pet_data["name"], pet_data["species"])
+            for task_data in pet_data["tasks"]:
+                pet.add_task(Task.from_dict(task_data))
+            owner.add_pet(pet)
+        return owner
+
+    def save_to_json(self, path: Union[str, Path] = "data.json") -> None:
+        """Save the owner, pets, and tasks to a JSON file."""
+        path = Path(path)
+        text = json.dumps({"version": DATA_VERSION, "owner": self.to_dict()}, indent=2)
+        # Write to a temporary file first, then swap it in, so a crash mid-write can't leave a half-written file.
+        temp = path.with_name(path.name + ".tmp")
+        temp.write_text(text + "\n", encoding="utf-8")
+        os.replace(temp, path)
+
+    @classmethod
+    def load_from_json(cls, path: Union[str, Path] = "data.json") -> Owner:
+        """Load an owner saved by save_to_json.
+
+        Raises FileNotFoundError if the file doesn't exist, and ValueError if it isn't valid PawPal+ data.
+        """
+        text = Path(path).read_text(encoding="utf-8")
+        try:
+            saved = json.loads(text)
+            if saved.get("version") != DATA_VERSION:
+                raise ValueError(f"unsupported data version {saved.get('version')!r}")
+            return cls.from_dict(saved["owner"])
+        except (json.JSONDecodeError, KeyError, TypeError, AttributeError, ValueError) as error:
+            raise ValueError(f"{path} is not valid PawPal+ data: {error}") from error
+
 
 @dataclass
 class DailyPlan:
@@ -202,13 +273,6 @@ class Scheduler:
         """Gather all tasks due today across the owner's pets."""
         return [task for task in self.owner.get_all_tasks() if task.is_due_today(self.date)]
 
-    def sort_tasks(self, tasks: list[Task]) -> list[Task]:
-        """Order tasks by priority (high first), then preferred time, then duration (short first)."""
-        return sorted(
-            tasks,
-            key=lambda t: (-t.priority_rank(), TIME_OF_DAY_ORDER[t.preferred_time], t.duration_minutes),
-        )
-
     def task_time(self, task: Task) -> Optional[str]:
         """Return the "HH:MM" a task is aimed at: its fixed time, else the start of its preferred part of the day."""
         if task.start_time:
@@ -217,16 +281,18 @@ class Scheduler:
             return self.owner.day_start
         return TIME_OF_DAY_START.get(task.preferred_time)
 
+    def task_minutes(self, task: Task) -> int:
+        """Return task_time() as minutes after midnight, so "9:00" sorts before "10:00"; untimed tasks get 24:00."""
+        when = self.task_time(task)
+        return to_minutes(when) if when else 24 * 60
+
+    def sort_by_priority(self, tasks: list[Task]) -> list[Task]:
+        """Order tasks by priority (high first), then by time of day (earliest first, untimed last), then shortest first."""
+        return sorted(tasks, key=lambda t: (-t.priority_rank(), self.task_minutes(t), t.duration_minutes))
+
     def sort_by_time(self, tasks: list[Task]) -> list[Task]:
         """Order tasks by time of day (earliest first); tasks with no time go last, higher priority first on ties."""
-        def time_key(task: Task) -> tuple[int, int]:
-            """Return (minutes after midnight, -priority) so earlier, then more important, tasks come first."""
-            # Convert "HH:MM" to minutes so "9:00" sorts before "10:00"; untimed tasks get 24:00 to land last.
-            when = self.task_time(task)
-            minutes = to_minutes(when) if when else 24 * 60
-            return (minutes, -task.priority_rank())
-
-        return sorted(tasks, key=time_key)
+        return sorted(tasks, key=lambda t: (self.task_minutes(t), -t.priority_rank()))
 
     def filter_tasks(self, pet_name: Optional[str] = None, completed: Optional[bool] = None) -> list[Task]:
         """Return the owner's tasks, keeping only one pet's and/or only done or not-done ones when given."""
@@ -241,10 +307,10 @@ class Scheduler:
         """Fit sorted tasks into the owner's available time and return the plan."""
         plan = DailyPlan(self.date)
 
-        # 1. Choose tasks: highest priority first, until the time budget runs out.
+        # 1. Choose tasks: highest priority first (earliest first within a priority), until the time budget runs out.
         remaining = self.owner.available_minutes
         chosen: list[Task] = []
-        for task in self.sort_tasks(self.collect_tasks()):
+        for task in self.sort_by_priority(self.collect_tasks()):
             if task.duration_minutes <= remaining:
                 chosen.append(task)
                 remaining -= task.duration_minutes
@@ -309,6 +375,54 @@ class Scheduler:
             if end > 24 * 60:
                 warnings.append(f"{task.title} for {task.pet_name} runs past midnight (starts {to_hhmm(start)})")
         return warnings
+
+    def _first_gap(self, busy: list[tuple[int, int]], duration: int, earliest: int) -> Optional[int]:
+        """Return the earliest start (minutes) at or after earliest where duration fits between busy intervals."""
+        cursor = earliest
+        for busy_start, busy_end in sorted(busy):
+            if busy_start >= cursor + duration:
+                break  # the gap before this interval is big enough
+            # Overlapping or touching: the gap can only start once this interval ends.
+            cursor = max(cursor, busy_end)
+        return cursor if cursor + duration <= 24 * 60 else None
+
+    def find_next_slot(
+        self, plan: DailyPlan, duration_minutes: int, earliest: Optional[str] = None, ignore: Optional[Task] = None
+    ) -> Optional[str]:
+        """Return the first "HH:MM" at or after earliest (default: day start) where a task this long fits
+        without overlapping anything in the plan, or None if nothing fits before midnight.
+
+        ignore leaves one task out of the busy times, so a task can look for a new slot for itself.
+        """
+        if duration_minutes <= 0:
+            raise ValueError("duration_minutes must be greater than 0")
+        busy = [(start, end) for start, end, task in self.plan_slots(plan) if task is not ignore]
+        start = self._first_gap(busy, duration_minutes, to_minutes(earliest or self.owner.day_start))
+        return None if start is None else to_hhmm(start)
+
+    def suggest_moves(self, plan: DailyPlan) -> list[tuple[Task, str, Optional[str]]]:
+        """Suggest new start times that clear every overlap in the plan, as (task, current start, new start).
+
+        Clashes are resolved one at a time: the lower-priority task of the earliest clash (or, on a tie,
+        the later one) moves to the next free slot at or after its current time. Each move accounts for
+        earlier moves, so the suggestions never clash with each other. New start is None if no gap is left today.
+        """
+        slots = self.plan_slots(plan)
+        moves = []
+        while True:
+            slots.sort(key=lambda slot: slot[0])
+            clash = next(((a, b) for a, b in combinations(slots, 2) if b[0] < a[1]), None)
+            if clash is None:
+                return moves
+            a, b = clash
+            mover = a if a[2].priority_rank() < b[2].priority_rank() else b
+            slots.remove(mover)
+            start, _, task = mover
+            # A moved task lands in a free gap, so it can't clash again; the loop ends after at most one move per task.
+            new_start = self._first_gap([(s, e) for s, e, _ in slots], task.duration_minutes, start)
+            moves.append((task, to_hhmm(start), None if new_start is None else to_hhmm(new_start)))
+            if new_start is not None:
+                slots.append((new_start, new_start + task.duration_minutes, task))
 
     def mark_task_complete(self, pet_name: str, title: str) -> Task:
         """Mark one pet's task done for the scheduler's date, add its next occurrence to the pet, and return it."""
