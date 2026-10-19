@@ -283,24 +283,29 @@ class Scheduler:
         plan.warnings = self.detect_conflicts(plan)
         return plan
 
-    def detect_conflicts(self, plan: DailyPlan) -> list[str]:
-        """Return a warning for every pair of overlapping tasks (same or different pets) and any task past midnight."""
-        warnings = []
-        # Turn each entry into (start, end, task) in minutes, sorted by start time.
-        slots = sorted(
+    def plan_slots(self, plan: DailyPlan) -> list[tuple[int, int, Task]]:
+        """Return each plan entry as (start, end, task) in minutes after midnight, sorted by start time."""
+        return sorted(
             ((to_minutes(start), to_minutes(start) + task.duration_minutes, task) for start, task, _ in plan.entries),
             key=lambda slot: slot[0],
         )
-        # Check every pair once. Because the list is sorted, the second task starts no earlier
+
+    def find_overlaps(self, plan: DailyPlan) -> list[tuple[tuple[int, int, Task], tuple[int, int, Task]]]:
+        """Return every pair of overlapping (start, end, task) slots in the plan, the earlier-starting one first."""
+        # Check every pair once. Because the slots are sorted, the second task starts no earlier
         # than the first, so they overlap exactly when the second starts before the first ends.
-        for (a_start, a_end, a), (b_start, b_end, b) in combinations(slots, 2):
-            if b_start < a_end:
-                who = f"both for {a.pet_name}" if a.pet_name == b.pet_name else "different pets"
-                warnings.append(
-                    f"{a.title} for {a.pet_name} ({to_hhmm(a_start)}-{to_hhmm(a_end)}) overlaps "
-                    f"{b.title} for {b.pet_name} ({to_hhmm(b_start)}-{to_hhmm(b_end)}); {who}"
-                )
-        for start, end, task in slots:
+        return [(a, b) for a, b in combinations(self.plan_slots(plan), 2) if b[0] < a[1]]
+
+    def detect_conflicts(self, plan: DailyPlan) -> list[str]:
+        """Return a warning for every pair of overlapping tasks (same or different pets) and any task past midnight."""
+        warnings = []
+        for (a_start, a_end, a), (b_start, b_end, b) in self.find_overlaps(plan):
+            who = f"both for {a.pet_name}" if a.pet_name == b.pet_name else "different pets"
+            warnings.append(
+                f"{a.title} for {a.pet_name} ({to_hhmm(a_start)}-{to_hhmm(a_end)}) overlaps "
+                f"{b.title} for {b.pet_name} ({to_hhmm(b_start)}-{to_hhmm(b_end)}); {who}"
+            )
+        for start, end, task in self.plan_slots(plan):
             if end > 24 * 60:
                 warnings.append(f"{task.title} for {task.pet_name} runs past midnight (starts {to_hhmm(start)})")
         return warnings

@@ -56,6 +56,9 @@ with col3:
     day_start = st.time_input("Day starts at", value=time.fromisoformat(owner.day_start))
     owner.day_start = day_start.strftime("%H:%M")
 
+today = date.today()
+scheduler = Scheduler(owner, today)
+
 st.subheader("Pets")
 with st.form("add_pet", clear_on_submit=True):
     col1, col2 = st.columns(2)
@@ -111,50 +114,140 @@ else:
                 owner.find_pet(task_pet).add_task(task)
                 st.success(f"Added {task.title} for {task_pet}.")
 
+    # Mark a task done before drawing the task list, so the list already shows the change.
+    due_today = scheduler.sort_by_time(scheduler.collect_tasks())
+    if due_today:
+        with st.form("complete_task"):
+            col1, col2 = st.columns([3, 1], vertical_alignment="bottom")
+            with col1:
+                done_task = st.selectbox(
+                    "Mark a task done",
+                    due_today,
+                    format_func=lambda task: f"{task.title} ({task.pet_name})",
+                )
+            with col2:
+                mark_done = st.form_submit_button("Mark done")
+            if mark_done:
+                next_task = scheduler.mark_task_complete(done_task.pet_name, done_task.title)
+                st.success(
+                    f"Done: {done_task.title} for {done_task.pet_name}. "
+                    f"Next one ({next_task.frequency}) is due {next_task.due_date:%a %b %d}."
+                )
+
+
+def task_status(task: Task) -> str:
+    """Describe whether a task is still to do today, done, or waiting for a later day."""
+    if task.completed:
+        return f"✅ done {task.last_completed:%b %d}"
+    if not task.is_due_today(today):
+        return f"🔁 due {task.due_date:%b %d}"
+    return "to do"
+
+
 all_tasks = owner.get_all_tasks()
 if all_tasks:
-    st.table(
-        [
-            {
-                "Pet": task.pet_name,
-                "Task": task.title,
-                "Minutes": task.duration_minutes,
-                "Priority": task.priority,
-                "Preferred time": task.preferred_time or "any",
-                "Fixed time": task.start_time or "",
-                "Frequency": task.frequency,
-            }
-            for task in all_tasks
-        ]
+    col1, col2 = st.columns(2)
+    with col1:
+        pet_filter = st.selectbox("Show pet", ["All pets"] + [pet.name for pet in owner.pets])
+    with col2:
+        status_filter = st.radio("Show tasks", ["All", "To do", "Done"], horizontal=True)
+    shown = scheduler.sort_by_time(
+        scheduler.filter_tasks(
+            pet_name=None if pet_filter == "All pets" else pet_filter,
+            completed={"All": None, "To do": False, "Done": True}[status_filter],
+        )
     )
+    if shown:
+        st.table(
+            [
+                {
+                    "Time": scheduler.task_time(task) or "any time",
+                    "Pet": task.pet_name,
+                    "Task": task.title,
+                    "Minutes": task.duration_minutes,
+                    "Priority": task.priority,
+                    "Repeats": task.frequency,
+                    "Status": task_status(task),
+                }
+                for task in shown
+            ]
+        )
+        st.caption("Sorted by time of day. Tasks without a set or preferred time are listed last.")
+    else:
+        st.info("No tasks match these filters.")
 else:
     st.info("No tasks yet.")
 
 st.divider()
 
 st.subheader("Build Schedule")
+st.caption(f"Plan for {today:%A, %B %d}")
 if st.button("Generate schedule"):
-    plan = Scheduler(owner, date.today()).generate_plan()
-    if plan.entries:
+    st.session_state.show_plan = True
+
+# Keep the plan on screen after other buttons are clicked, rebuilt from the latest tasks each time.
+if st.session_state.get("show_plan"):
+    plan = scheduler.generate_plan()
+    overlaps = scheduler.find_overlaps(plan)
+    clashing = {id(task) for pair in overlaps for _, _, task in pair}
+    late = [(start, task) for start, end, task in scheduler.plan_slots(plan) if end > 24 * 60]
+
+    if not plan.entries:
+        st.info("Nothing to schedule today.")
+    elif overlaps or late:
+        st.warning(
+            f"Scheduled {len(plan.entries)} tasks ({plan.total_minutes()} of {owner.available_minutes} min), "
+            "but some times need your attention. See below."
+        )
+    else:
         st.success(
             f"Scheduled {len(plan.entries)} task{'s' if len(plan.entries) != 1 else ''} "
-            f"({plan.total_minutes()} of {owner.available_minutes} min)."
+            f"({plan.total_minutes()} of {owner.available_minutes} min) with no time clashes."
         )
+
+    # Show clashes above the table, with a concrete fix for each, so they are seen before the day starts.
+    if overlaps:
+        lines = []
+        for (a_start, a_end, a), (b_start, b_end, b) in overlaps:
+            overlap = min(a_end, b_end) - b_start
+            if a.pet_name == b.pet_name:
+                who = f"{a.pet_name} can't do both at once"
+            else:
+                who = f"you can't care for {a.pet_name} and {b.pet_name} at the same moment unless someone helps"
+            lines.append(
+                f"- **{to_hhmm(b_start)}**: {b.title} ({b.pet_name}) overlaps {a.title} ({a.pet_name}) "
+                f"by {overlap} min; {who}. Try moving {b.title} to **{to_hhmm(a_end)}** or later."
+            )
+        count = len(overlaps)
+        st.warning(f"**{count} time clash{'es' if count != 1 else ''}**\n\n" + "\n".join(lines), icon="⚠️")
+    for start, task in late:
+        st.warning(
+            f"{task.title} ({task.pet_name}) starts at {to_hhmm(start)} and runs past midnight. Try an earlier time.",
+            icon="🌙",
+        )
+
+    if plan.entries:
         st.table(
             [
                 {
-                    "Time": f"{start}-{to_hhmm(to_minutes(start) + task.duration_minutes)}",
+                    "Time": ("⚠️ " if id(task) in clashing else "")
+                    + f"{start}-{to_hhmm(to_minutes(start) + task.duration_minutes)}",
                     "Pet": task.pet_name,
                     "Task": task.title,
+                    "Minutes": task.duration_minutes,
                     "Priority": task.priority,
                     "Why": reason,
                 }
                 for start, task, reason in plan.entries
             ]
         )
-    else:
-        st.info("Nothing to schedule today.")
-    for task, reason in plan.skipped:
-        st.warning(f"Skipped {task.title} for {task.pet_name}: {reason}")
-    for warning in plan.warnings:
-        st.error(f"Conflict: {warning}")
+
+    if plan.skipped:
+        lines = [f"- {task.title} ({task.pet_name}): {reason}" for task, reason in plan.skipped]
+        st.info(
+            "**Didn't fit today**\n\n" + "\n".join(lines)
+            + "\n\nAdd more minutes above or lower another task's priority to fit these in."
+        )
+
+    with st.expander("Plain-text plan"):
+        st.code(plan.explain(), language=None)

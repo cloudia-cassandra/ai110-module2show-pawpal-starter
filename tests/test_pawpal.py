@@ -4,7 +4,7 @@ from datetime import date
 
 import pytest
 
-from pawpal_system import Owner, Pet, Scheduler, Task, to_minutes
+from pawpal_system import Owner, Pet, Scheduler, Task, to_hhmm, to_minutes
 
 
 def test_mark_complete_changes_task_status():
@@ -326,3 +326,18 @@ def test_invalid_edit_leaves_task_unchanged():
 
     task = pet.find_task("Walk")
     assert task.priority == "high" and task.duration_minutes == 30
+
+
+def test_find_overlaps_returns_each_clashing_pair_earlier_task_first():
+    owner = owner_with(
+        Task("Walk", 30, "high", start_time="09:00"),
+        Task("Breakfast", 10, "high", start_time="08:15"),
+        Task("Meds", 5, "high", start_time="08:20"),
+    )
+    scheduler = Scheduler(owner, date(2026, 10, 18))
+
+    overlaps = scheduler.find_overlaps(scheduler.generate_plan())
+
+    assert [(a[2].title, b[2].title) for a, b in overlaps] == [("Breakfast", "Meds")]
+    (a_start, a_end, _), (b_start, _, _) = overlaps[0]
+    assert (to_hhmm(a_start), to_hhmm(a_end), to_hhmm(b_start)) == ("08:15", "08:25", "08:20")

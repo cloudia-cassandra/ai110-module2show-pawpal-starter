@@ -1,0 +1,93 @@
+classDiagram
+    %% PawPal+ final UML: matches pawpal_system.py after Phase 3 (sorting, filtering,
+    %% recurring tasks, conflict detection) and the conflict UI in app.py.
+
+    class Owner {
+        +str name
+        +int available_minutes
+        +str day_start
+        +list~Pet~ pets
+        +add_pet(pet: Pet) None
+        +find_pet(name: str) Pet
+        +get_all_tasks() list~Task~
+    }
+
+    class Pet {
+        +str name
+        +str species
+        +list~Task~ tasks
+        +add_task(task: Task) None
+        +find_task(title: str) Task
+        +remove_task(title: str) None
+        +edit_task(title: str, changes: dict) None
+    }
+
+    class Task {
+        +str title
+        +int duration_minutes
+        +str priority
+        +Optional~str~ preferred_time
+        +Optional~str~ start_time
+        +str frequency
+        +Optional~date~ due_date
+        +bool completed
+        +Optional~date~ last_completed
+        +str pet_name
+        +__post_init__() None
+        +priority_rank() int
+        +is_due_today(day: date) bool
+        +next_occurrence(day: date) Task
+        +mark_complete(day: date) Task
+    }
+
+    class Scheduler {
+        +Owner owner
+        +date date
+        +collect_tasks() list~Task~
+        +sort_tasks(tasks: list~Task~) list~Task~
+        +task_time(task: Task) Optional~str~
+        +sort_by_time(tasks: list~Task~) list~Task~
+        +filter_tasks(pet_name: Optional~str~, completed: Optional~bool~) list~Task~
+        +generate_plan() DailyPlan
+        +plan_slots(plan: DailyPlan) list~tuple~
+        +find_overlaps(plan: DailyPlan) list~tuple~
+        +detect_conflicts(plan: DailyPlan) list~str~
+        +mark_task_complete(pet_name: str, title: str) Task
+    }
+
+    class DailyPlan {
+        +date date
+        +list~tuple~ entries
+        +list~tuple~ skipped
+        +list~str~ warnings
+        +add_entry(task: Task, start_time: str, reason: str) None
+        +skip(task: Task, reason: str) None
+        +total_minutes() int
+        +explain() str
+    }
+
+    class pawpal_system {
+        <<module>>
+        +PRIORITY_RANKS: dict
+        +FREQUENCIES: tuple
+        +RECURRENCE_GAP: dict
+        +TIME_OF_DAY_ORDER: dict
+        +TIME_OF_DAY_START: dict
+        +to_minutes(hhmm: str) int
+        +to_hhmm(minutes: int) str
+    }
+
+    Owner "1" o-- "0..*" Pet : pets
+    Pet "1" *-- "0..*" Task : tasks
+    Task ..> Task : next_occurrence() creates the next copy
+    Scheduler "1" --> "1" Owner : reads tasks via get_all_tasks()
+    Scheduler ..> Pet : mark_task_complete() adds next occurrence
+    Scheduler ..> Task : sorts, filters, places
+    Scheduler ..> DailyPlan : creates, checks for overlaps
+    DailyPlan "1" o-- "0..*" Task : entries / skipped
+    Scheduler ..> pawpal_system : time helpers and constants
+    Task ..> pawpal_system : validation constants
+
+    note for Task "Validated on creation (priority, frequency,\npreferred_time, duration, HH:MM start_time).\npet_name is set by Pet.add_task()."
+    note for DailyPlan "entries: (start HH:MM, Task, reason)\nskipped: (Task, reason)"
+    note for Scheduler "plan_slots / find_overlaps use (start_min, end_min, Task).\napp.py uses find_overlaps() to mark clashing rows\nand suggest a new time."
