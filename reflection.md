@@ -115,12 +115,12 @@ Using a separate chat session for each phase kept each conversation focused on o
 - What behaviors did you test?
 - Why were these tests important?
 
-The test suite has 49 tests in `tests/test_pawpal.py`, covering both normal use and edge cases:
+The test suite has 70 tests in `tests/test_pawpal.py` and `tests/test_format.py`, covering both normal use and edge cases:
 
 - **Sorting:** tasks come out in time order with untimed tasks last; tasks at the same time put higher priority first; `"HIGH"` is treated as `"high"`.
 - **Building the plan:** an owner with no pets or a pet with no tasks gets an empty plan without crashing; a task that uses exactly the remaining minutes is still scheduled; with 0 minutes everything is skipped with a reason.
 - **Placing tasks:** fixed-time tasks land at their exact time, flexible tasks move past fixed tasks they would overlap, and afternoon tasks wait until 12:00.
-- **Recurring tasks:** completing a daily or weekly task creates the next one 1 or 7 days later, even across a month boundary; completing the same task twice in one day is refused; an overdue task is still planned.
+- **Recurring tasks:** completing a daily or weekly task creates the next one 1 or 7 days later, even across a month boundary; a weekly task done late keeps its weekday instead of drifting; completing the same task twice in one day is refused; an overdue task is still planned.
 - **Conflict detection:** two tasks at exactly the same time are flagged; three overlapping tasks give one warning per pair; back-to-back tasks are not conflicts; a task ending exactly at midnight is fine, but one minute later is flagged.
 - **Validation:** bad times like `"8am"` are rejected, and an invalid edit leaves the task unchanged.
 
@@ -131,7 +131,7 @@ These tests matter because the scheduler's mistakes are quiet. A wrong plan stil
 - How confident are you that your scheduler works correctly?
 - What edge cases would you test next if you had more time?
 
-I'd rate my confidence at 4 out of 5. All 49 tests pass, and they cover every scheduling feature, including the cases most likely to break it. I also ran the Streamlit app headlessly through a full workflow and the terminal demo, and both matched what the tests promise. I held back the fifth star because the Streamlit UI has no automated tests of its own, and because the greedy approach is a choice I tested rather than proved to be the best one.
+I'd rate my confidence at 4 out of 5. All 70 tests pass, and they cover every scheduling feature, including the cases most likely to break it. I also ran the Streamlit app headlessly through a full workflow and the terminal demo, and both matched what the tests promise. I held back the fifth star because the Streamlit UI has no automated tests of its own, and because the greedy approach is a choice I tested rather than proved to be the best one.
 
 If I had more time, I would test:
 

@@ -2,7 +2,8 @@ classDiagram
     %% PawPal+ final UML: matches pawpal_system.py after Phase 3 (sorting, filtering,
     %% recurring tasks, conflict detection), the next-available-slot finder (Challenge 1),
     %% JSON persistence (Challenge 2), priority-then-time
-    %% scheduling (Challenge 3) and the conflict UI in app.py.
+    %% scheduling (Challenge 3), output formatting
+    %% (Challenge 4) and the conflict UI in app.py.
 
     class Owner {
         +str name
@@ -91,6 +92,19 @@ classDiagram
         +to_hhmm(minutes: int) str
     }
 
+    class pawpal_format {
+        <<module>>
+        +task_icon(task: Task) str
+        +species_icon(species: str) str
+        +priority_label(priority: str, color: bool) str
+        +status_label(task: Task, scheduler: Scheduler, color: bool) str
+        +task_table(scheduler: Scheduler, tasks: list~Task~, color: bool) str
+        +plan_report(scheduler: Scheduler, plan: DailyPlan, color: bool) str
+        +moves_table(scheduler: Scheduler, moves: list~tuple~, color: bool) str
+        +use_color(stream) bool
+        +cell_style(value) str
+    }
+
     Owner "1" o-- "0..*" Pet : pets
     Pet "1" *-- "0..*" Task : tasks
     Task ..> Task : next_occurrence() creates the next copy
@@ -101,6 +115,7 @@ classDiagram
     DailyPlan "1" o-- "0..*" Task : entries / skipped
     Scheduler ..> pawpal_system : time helpers and constants
     Task ..> pawpal_system : validation constants
+    pawpal_format ..> Scheduler : formats tasks and plans (CLI + app)
 
     note for Owner "save_to_json / load_from_json store the owner,\npets and tasks in data.json as {version, owner}."
     note for Task "Validated on creation (priority, frequency,\npreferred_time, duration, HH:MM start_time).\npet_name is set by Pet.add_task()."

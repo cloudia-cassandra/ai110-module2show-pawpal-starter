@@ -567,3 +567,49 @@ def test_loading_bad_data_raises_value_error(tmp_path, text):
 
     with pytest.raises(ValueError, match="not valid PawPal\\+ data"):
         Owner.load_from_json(path)
+
+
+# --- Anchored recurrence (weekly tasks keep their weekday) ---
+
+
+@pytest.mark.parametrize(
+    "due, done, expected",
+    [
+        (date(2026, 10, 17), date(2026, 10, 17), date(2026, 10, 24)),  # Saturday task done on time
+        (date(2026, 10, 17), date(2026, 10, 19), date(2026, 10, 24)),  # done Monday: still Saturday, no drift
+        (date(2026, 10, 17), date(2026, 10, 24), date(2026, 10, 31)),  # a week late: next is strictly after today
+        (date(2026, 10, 17), date(2026, 11, 9), date(2026, 11, 14)),  # three weeks missed: one copy, no backlog
+        (date(2026, 10, 17), date(2026, 10, 14), date(2026, 10, 24)),  # done early: not due twice that week
+        (date(2026, 12, 27), date(2027, 1, 2), date(2027, 1, 3)),  # across a year boundary
+        (None, date(2026, 10, 19), date(2026, 10, 26)),  # no due date yet: the first completion sets the weekday
+    ],
+)
+def test_weekly_task_keeps_its_weekday(due, done, expected):
+    task = Task("Bath", 45, "low", frequency="weekly", due_date=due)
+
+    next_task = task.mark_complete(done)
+
+    assert next_task.due_date == expected
+    assert next_task.completed is False and next_task.last_completed is None
+
+
+@pytest.mark.parametrize(
+    "due, done, expected",
+    [
+        (date(2026, 10, 10), date(2026, 10, 18), date(2026, 10, 19)),  # overdue: due tomorrow, not a backlog
+        (date(2026, 10, 19), date(2026, 10, 17), date(2026, 10, 20)),  # early: the day after its due date
+        (date(2026, 12, 31), date(2026, 12, 31), date(2027, 1, 1)),
+    ],
+)
+def test_daily_task_is_due_the_day_after_it_was_done_or_due(due, done, expected):
+    assert Task("Feeding", 10, "high", due_date=due).mark_complete(done).due_date == expected
+
+
+def test_late_weekly_task_comes_back_on_its_weekday_in_the_scheduler():
+    owner = owner_with(Task("Bath", 45, "low", frequency="weekly", due_date=date(2026, 10, 17)))  # a Saturday
+
+    next_task = Scheduler(owner, date(2026, 10, 19)).mark_task_complete("Mochi", "Bath")  # done Monday
+
+    assert next_task.due_date == date(2026, 10, 24) and next_task.due_date.weekday() == 5
+    assert not Scheduler(owner, date(2026, 10, 23)).collect_tasks()
+    assert Scheduler(owner, date(2026, 10, 24)).collect_tasks() == [next_task]

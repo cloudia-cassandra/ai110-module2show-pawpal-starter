@@ -3,23 +3,25 @@
 from dataclasses import replace
 from datetime import date
 
+from pawpal_format import heading, moves_table, paint, plan_report, task_label, task_table, use_color
 from pawpal_system import Owner, Pet, Scheduler, Task
 
 DEMO_DAY = date(2026, 10, 18)  # fixed so the output is the same every run
+COLOR = use_color()  # colors only in a real terminal; set NO_COLOR=1 to turn them off
 
 
-def print_tasks(heading: str, scheduler: Scheduler, tasks: list[Task]) -> None:
-    """Print a heading and one aligned line per task."""
-    print(f"\n{heading}")
-    if not tasks:
-        print("  (none)")
-    for task in tasks:
-        when = scheduler.task_time(task) or "any time"
-        if task.completed:
-            status = f"done {task.last_completed.isoformat()}"
-        else:
-            status = f"due {task.due_date.isoformat()}" if task.due_date else "to do"
-        print(f"  {when:<9} {task.title:<15} {task.pet_name:<6} {task.priority:<7} {status}")
+def print_tasks(title: str, scheduler: Scheduler, tasks: list[Task]) -> None:
+    """Print a bold heading and the tasks as a table."""
+    print(heading(title, COLOR))
+    print(task_table(scheduler, tasks, COLOR))
+
+
+def banner(title: str) -> None:
+    """Print a section banner."""
+    print()
+    print(paint("═" * 60, "cyan", COLOR))
+    print(paint(f"  {title}", "bold", COLOR))
+    print(paint("═" * 60, "cyan", COLOR))
 
 
 def main() -> None:
@@ -53,7 +55,10 @@ def main() -> None:
 
     # Completing a recurring task automatically adds its next occurrence.
     next_meds = scheduler.mark_task_complete("Mochi", "Heartworm meds")
-    print(f"\nMarked Heartworm meds done; next one ({next_meds.frequency}) is due {next_meds.due_date.isoformat()}.")
+    print(paint(
+        f"\n✅ Marked Heartworm meds done; next one ({next_meds.frequency}) is due {next_meds.due_date:%a %b %d}.",
+        "green", COLOR,
+    ))
     print_tasks("Completed tasks:", scheduler, scheduler.filter_tasks(completed=True))
     print_tasks(
         "Mochi's tasks still to do, sorted by time:",
@@ -63,29 +68,21 @@ def main() -> None:
 
     planner = Scheduler(owner, DEMO_DAY)
     plan = planner.generate_plan()
-    print()
-    print("=" * 60)
-    print(f"Today's Schedule for {owner.name}'s pets")
-    print("=" * 60)
-    print(plan.explain())
+    banner(f"Today's Schedule for {owner.name}'s pets")
+    print(plan_report(planner, plan, COLOR))
 
     # Next available slot: new times that clear every clash without creating new ones.
-    print("\nSuggested fix for the clashes:")
-    for task, old_start, new_start in planner.suggest_moves(plan):
-        print(f"  Move {task.title} for {task.pet_name} from {old_start} to {new_start or '(no free time left today)'}")
-    print(f"Next free 20-minute slot after 09:00: {planner.find_next_slot(plan, 20, earliest='09:00')}")
+    print(heading("💡 Suggested fix for the clashes:", COLOR))
+    print(moves_table(planner, planner.suggest_moves(plan), COLOR))
+    print(f"🕒 Next free 20-minute slot after 09:00: {planner.find_next_slot(plan, 20, earliest='09:00')}")
 
     # Priority-based scheduling on a tight day: tasks are chosen by priority, earliest first within a priority.
-    tight_plan = Scheduler(replace(owner, available_minutes=25), DEMO_DAY).generate_plan()
-    print()
-    print("=" * 60)
-    print("Tight day: same tasks, only 25 minutes")
-    print("=" * 60)
-    print("Choosing order:", ", ".join(
-        f"{t.title} ({t.pet_name}, {t.priority})" for t in planner.sort_by_priority(planner.collect_tasks())
-    ))
-    print(tight_plan.explain())
-
+    tight = Scheduler(replace(owner, available_minutes=25), DEMO_DAY)
+    banner("Tight day: same tasks, only 25 minutes")
+    print(paint("Choosing order (priority, then time):", "bold", COLOR))
+    for rank, task in enumerate(tight.sort_by_priority(tight.collect_tasks()), start=1):
+        print(f"  {rank}. {task_label(task)} ({task.pet_name}, {task.priority})")
+    print(plan_report(tight, tight.generate_plan(), COLOR))
 
 if __name__ == "__main__":
     main()

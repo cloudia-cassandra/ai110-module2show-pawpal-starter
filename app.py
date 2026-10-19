@@ -1,8 +1,10 @@
 from datetime import date, time
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 
+from pawpal_format import cell_style, priority_label, species_icon, status_label, task_label
 from pawpal_system import Owner, Pet, Scheduler, Task, to_hhmm, to_minutes
 
 st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
@@ -104,7 +106,12 @@ with st.form("add_pet", clear_on_submit=True):
             st.success(f"Added {name}.")
 
 if owner.pets:
-    st.table([{"Pet": pet.name, "Species": pet.species, "Tasks": len(pet.tasks)} for pet in owner.pets])
+    st.table(
+        pd.DataFrame(
+            [{"Pet": f"{species_icon(pet.species)} {pet.name}", "Species": pet.species, "Tasks": len(pet.tasks)}
+             for pet in owner.pets]
+        ).style.hide(axis="index")
+    )
 else:
     st.info("No pets yet. Add one above.")
 
@@ -150,7 +157,7 @@ else:
                 done_task = st.selectbox(
                     "Mark a task done",
                     due_today,
-                    format_func=lambda task: f"{task.title} ({task.pet_name})",
+                    format_func=lambda task: f"{task_label(task)} ({task.pet_name})",
                 )
             with col2:
                 mark_done = st.form_submit_button("Mark done")
@@ -162,17 +169,16 @@ else:
                 )
 
 
-def task_status(task: Task) -> str:
-    """Describe whether a task is still to do today, done, or waiting for a later day."""
-    if task.completed:
-        return f"✅ done {task.last_completed:%b %d}"
-    if not task.is_due_today(today):
-        return f"🔁 due {task.due_date:%b %d}"
-    return "to do"
+def styled_table(rows: list[dict]) -> None:
+    """Show rows as a table with tinted Priority and Status cells (red/yellow/green priority, green done, blue due)."""
+    frame = pd.DataFrame(rows)
+    tinted = [column for column in ("Priority", "Status") if column in frame.columns]
+    st.table(frame.style.map(cell_style, subset=tinted).hide(axis="index"))
 
 
-# Colored badges so priority stands out in every table.
-PRIORITY_BADGE = {"high": "🔴 high", "medium": "🟡 medium", "low": "🟢 low"}
+def pet_cell(task: Task) -> str:
+    """Return the task's pet with its species icon, e.g. "🐶 Mochi"."""
+    return f"{species_icon(owner.find_pet(task.pet_name).species)} {task.pet_name}"
 
 all_tasks = owner.get_all_tasks()
 if all_tasks:
@@ -190,16 +196,16 @@ if all_tasks:
     sort = scheduler.sort_by_time if sort_order == "Time" else scheduler.sort_by_priority
     shown = sort(filtered)
     if shown:
-        st.table(
+        styled_table(
             [
                 {
                     "Time": scheduler.task_time(task) or "any time",
-                    "Pet": task.pet_name,
-                    "Task": task.title,
+                    "Pet": pet_cell(task),
+                    "Task": task_label(task),
                     "Minutes": task.duration_minutes,
-                    "Priority": PRIORITY_BADGE[task.priority],
+                    "Priority": priority_label(task.priority),
                     "Repeats": task.frequency,
-                    "Status": task_status(task),
+                    "Status": status_label(task, scheduler),
                 }
                 for task in shown
             ]
@@ -262,7 +268,7 @@ if st.session_state.get("show_plan"):
         # suggest_moves() resolves the clashes one at a time, so its new times don't clash with each other.
         moves = scheduler.suggest_moves(plan)
         lines = [
-            f"- Move **{task.title}** ({task.pet_name}) from {old} to **{new}**"
+            f"- Move **{task_label(task)}** ({task.pet_name}) from {old} to **{new}**"
             if new
             else f"- No free {task.duration_minutes}-minute gap is left today for **{task.title}** ({task.pet_name})"
             for task, old, new in moves
@@ -280,15 +286,15 @@ if st.session_state.get("show_plan"):
         )
 
     if plan.entries:
-        st.table(
+        styled_table(
             [
                 {
                     "Time": ("⚠️ " if id(task) in clashing else "")
                     + f"{start}-{to_hhmm(to_minutes(start) + task.duration_minutes)}",
-                    "Pet": task.pet_name,
-                    "Task": task.title,
+                    "Pet": pet_cell(task),
+                    "Task": task_label(task),
                     "Minutes": task.duration_minutes,
-                    "Priority": PRIORITY_BADGE[task.priority],
+                    "Priority": priority_label(task.priority),
                     "Why": reason,
                 }
                 for start, task, reason in plan.entries
@@ -308,7 +314,8 @@ if st.session_state.get("show_plan"):
             st.warning(f"No free {needed}-minute gap is left today after {earliest:%H:%M}.")
 
     if plan.skipped:
-        lines = [f"- {task.title} ({task.pet_name}): {reason}" for task, reason in plan.skipped]
+        lines = [f"- {task_label(task)} ({task.pet_name}, {priority_label(task.priority)}): {reason}"
+                 for task, reason in plan.skipped]
         st.info(
             "**Didn't fit today**\n\n" + "\n".join(lines)
             + "\n\nAdd more minutes above or lower another task's priority to fit these in."

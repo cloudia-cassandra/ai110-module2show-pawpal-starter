@@ -58,7 +58,7 @@ Each feature below is implemented in [`pawpal_system.py`](pawpal_system.py) and 
 - **Filtering:** `filter_tasks(pet_name, completed)` shows one pet's tasks, only tasks still to do, only finished tasks, or any combination.
 
 **Recurring tasks**
-- **Daily and weekly recurrence:** marking a task done records the day and adds the next copy to the same pet, due 1 day (daily) or 7 days (weekly) after the day it was completed. Dates roll over months and years correctly.
+- **Daily and weekly recurrence:** marking a task done records the day and adds the next copy to the same pet. The schedule is **anchored**: a weekly task keeps its weekday even when it's done late. A Saturday bath done on Monday is due again on Saturday, not the next Monday. Several missed weeks produce one next copy, not a backlog. Dates roll over months and years correctly.
 - **Due dates:** a task due in the future stays out of today's plan. An overdue task is still planned, and completing the same task twice in one day is refused.
 
 **Conflict warnings**
@@ -72,6 +72,11 @@ Each feature below is implemented in [`pawpal_system.py`](pawpal_system.py) and 
 
 **Saving your data** *(Challenge 2)*
 - **Automatic save and load:** pets, tasks (including completed history and due dates) and owner settings are saved to `data.json` after every change and loaded when the app starts. See [💾 Data Persistence](#-data-persistence).
+
+**Readable output** *(Challenge 4)*
+- **Emojis for task types and pets:** 💊 meds, 🦮 walks, 🍖 meals, 🛁 baths, 🧼 grooming, 🧹 litter, 🧸 play (🐾 otherwise), 🐶 dogs, 🐱 cats.
+- **Color-coded priority and status:** 🔴 high, 🟡 medium, 🟢 low; ✅ done, 🔁 due later, ⏳ to do. Colored text in the terminal and tinted table cells in the app.
+- **Structured CLI tables** with [tabulate](https://pypi.org/project/tabulate/). See [🎨 Output Formatting](#-output-formatting).
 
 **Input validation**
 - Priority, frequency, preferred time, duration and start time are checked when a task is created or edited. Bad values such as `"8am"` or `"25:00"` are rejected with a clear message, and a failed edit leaves the task unchanged.
@@ -90,7 +95,7 @@ The scheduling logic lives in [`pawpal_system.py`](pawpal_system.py). It has fiv
   4. warns about any overlapping tasks.
 - **`DailyPlan`** is the result: scheduled tasks with start times and reasons, skipped tasks with reasons, and warnings. `explain()` turns it into readable text.
 
-[`main.py`](main.py) is a terminal demo with one owner and two pets. The final class diagram is in [`diagrams/uml_final.mmd`](diagrams/uml_final.mmd) (first draft: [`diagrams/uml.mmd`](diagrams/uml.mmd)).
+[`pawpal_format.py`](pawpal_format.py) holds the presentation helpers (emojis, colors, tables) shared by the terminal demo and the app, so the scheduling classes stay free of display code. [`main.py`](main.py) is a terminal demo with one owner and two pets. The final class diagram is in [`diagrams/uml_final.mmd`](diagrams/uml_final.mmd) (first draft: [`diagrams/uml.mmd`](diagrams/uml.mmd)).
 
 ## 🖥️ Sample Output
 
@@ -104,15 +109,16 @@ Run the full test suite from the project folder (with `.venv` activated):
 python -m pytest
 ```
 
-The 49 tests in [`tests/test_pawpal.py`](tests/test_pawpal.py) check both normal use and edge cases:
+The 70 tests in [`tests/test_pawpal.py`](tests/test_pawpal.py) and [`tests/test_format.py`](tests/test_format.py) check both normal use and edge cases:
 
 - **Sorting:** tasks come out in time order (fixed times, then preferred part of the day, untimed tasks last); tasks at the same time put higher priority first; priority-then-time order puts a fixed 07:00 task before a flexible 08:00 one and untimed tasks last within each priority, then shortest first; a tight budget keeps the earlier of two high-priority tasks; priority, not time, decides what is skipped; `"HIGH"` is treated as `"high"`.
 - **Building the plan:** an owner with no pets or a pet with no tasks gets an empty plan without crashing; a task that uses up exactly the remaining minutes is still scheduled; with 0 minutes every task is skipped with a reason; a large task that doesn't fit is skipped while a smaller one still fits.
 - **Placing tasks:** fixed-time tasks land exactly at their time; flexible tasks move past fixed tasks they would overlap; afternoon tasks wait until 12:00; plan entries are in time order.
-- **Recurring tasks:** completing a daily task creates one due tomorrow, and a weekly one creates one due in 7 days (across a month boundary); the new copy stays out of today's plan; completing the same task twice in one day is rejected; an overdue task is still planned, and its next copy is due the day after it was completed.
+- **Recurring tasks:** completing a daily task creates one due tomorrow, and a weekly one creates one due in 7 days (across a month boundary); a weekly task done late, early or weeks overdue keeps its weekday, with a single next copy; the new copy stays out of today's plan; completing the same task twice in one day is rejected; an overdue task is still planned, and its next copy is due the day after it was completed.
 - **Conflict detection:** two tasks at the exact same time are flagged; overlaps are labeled as the same pet or different pets; three overlapping tasks give one warning per pair; back-to-back tasks are not conflicts; `find_overlaps()` returns each clashing pair with its times; a task ending exactly at midnight is fine, but one running past it is flagged.
 - **Next available slot:** an empty plan's first slot is the day start; gaps that are too small are skipped and a gap that fits exactly is used; overlapping busy times are treated as one block; a task can ignore itself when looking for a new time; nothing fits past midnight; suggested moves clear every clash without creating new ones, and move the lower-priority task even if it starts first.
 - **Saving and loading:** a save/load round trip gives back an identical owner (dates, completed history, duplicate titles, `pet_name`), and the reloaded data builds the same plan; the file is plain JSON with ISO dates and no temp file is left behind; an owner with no pets round-trips; a missing file raises `FileNotFoundError`; broken JSON, an unknown version, a missing owner, an invalid task value, an unknown field or a bad date each raise a clear `ValueError`.
+- **Output formatting:** task-type icons (with a default), species icons, priority and status labels, colors only for real terminals and never with `NO_COLOR`, CLI table rows that all have the same on-screen width with emojis and colors, plan reports that mark clashes and list skipped tasks, and the pandas cell tints.
 - **Validation and filtering:** bad start times like `"8am"` or `"25:00"` are rejected; an invalid edit leaves the task unchanged; filtering by pet and by done/not done returns the right tasks.
 
 Output of a successful run:
@@ -124,16 +130,18 @@ rootdir: /Users/claudiacassandra/projects/ai110-module2show-pawpal-starter
 configfile: pytest.ini
 testpaths: tests
 plugins: anyio-4.15.1
-collected 49 items
+collected 70 items
 
-tests/test_pawpal.py .................................................   [100%]
+tests/test_format.py ..........                                          [ 14%]
+tests/test_pawpal.py ................................................... [ 87%]
+.........                                                                [100%]
 
-============================== 49 passed in 0.02s ==============================
+============================== 70 passed in 0.20s ==============================
 ```
 
 ### Confidence Level: ★★★★☆ (4/5)
 
-All 49 tests pass. They cover each scheduling feature, including the edge cases most likely to break it: empty input, tasks at the same time, hitting the time limit exactly, repeating a task, and the midnight cutoff. I'm not giving 5 stars for three reasons. The Streamlit UI in `app.py` has no automated tests. The scheduler fills the day greedily by priority, so it can skip a high-priority task that doesn't fit even when a different combination would use the time better; the tests confirm this behavior but don't make it the best choice. And there are no tests for very large numbers of pets or tasks.
+All 70 tests pass. They cover each scheduling feature, including the edge cases most likely to break it: empty input, tasks at the same time, hitting the time limit exactly, repeating a task, and the midnight cutoff. I'm not giving 5 stars for three reasons. The Streamlit UI in `app.py` has no automated tests. The scheduler fills the day greedily by priority, so it can skip a high-priority task that doesn't fit even when a different combination would use the time better; the tests confirm this behavior but don't make it the best choice. And there are no tests for very large numbers of pets or tasks.
 
 ## 📐 Smarter Scheduling
 
@@ -165,52 +173,77 @@ Every `Task` has a `priority` of `"low"`, `"medium"` or `"high"`. It is case-ins
 
 ```
 Sorted by time:
-  07:00     Brush teeth     Mochi  low     to do
-  07:30     Morning walk    Mochi  high    to do
-  08:00     Heartworm meds  Mochi  high    to do
-  08:15     Breakfast       Mochi  high    to do
-  08:15     Breakfast       Luna   high    to do
-  08:20     Litter box      Luna   medium  to do
-  12:00     Brush coat      Luna   medium  to do
-  17:00     Puzzle toy      Mochi  medium  to do
-  20:00     Evening meds    Luna   high    to do
-  any time  Bath            Mochi  low     to do
+╭──────────┬───────────────────┬──────────┬───────┬────────────┬──────────╮
+│ Time     │ Task              │ Pet      │   Min │ Priority   │ Status   │
+├──────────┼───────────────────┼──────────┼───────┼────────────┼──────────┤
+│ 07:00    │ 🧼 Brush teeth    │ 🐶 Mochi │     5 │ 🟢 low     │ ⏳ to do │
+│ 07:30    │ 🦮 Morning walk   │ 🐶 Mochi │    30 │ 🔴 high    │ ⏳ to do │
+│ 08:00    │ 💊 Heartworm meds │ 🐶 Mochi │     5 │ 🔴 high    │ ⏳ to do │
+│ 08:15    │ 🍖 Breakfast      │ 🐶 Mochi │    10 │ 🔴 high    │ ⏳ to do │
+│ 08:15    │ 🍖 Breakfast      │ 🐱 Luna  │    10 │ 🔴 high    │ ⏳ to do │
+│ 08:20    │ 🧹 Litter box     │ 🐱 Luna  │     5 │ 🟡 medium  │ ⏳ to do │
+│ 12:00    │ 🧼 Brush coat     │ 🐱 Luna  │    20 │ 🟡 medium  │ ⏳ to do │
+│ 17:00    │ 🧸 Puzzle toy     │ 🐶 Mochi │    15 │ 🟡 medium  │ ⏳ to do │
+│ 20:00    │ 💊 Evening meds   │ 🐱 Luna  │     5 │ 🔴 high    │ ⏳ to do │
+│ any time │ 🛁 Bath           │ 🐶 Mochi │    45 │ 🟢 low     │ ⏳ to do │
+╰──────────┴───────────────────┴──────────┴───────┴────────────┴──────────╯
 ```
 
 ```
 Sorted by priority, then time:
-  07:30     Morning walk    Mochi  high    to do
-  08:00     Heartworm meds  Mochi  high    to do
-  08:15     Breakfast       Mochi  high    to do
-  08:15     Breakfast       Luna   high    to do
-  20:00     Evening meds    Luna   high    to do
-  08:20     Litter box      Luna   medium  to do
-  12:00     Brush coat      Luna   medium  to do
-  17:00     Puzzle toy      Mochi  medium  to do
-  07:00     Brush teeth     Mochi  low     to do
-  any time  Bath            Mochi  low     to do
+╭──────────┬───────────────────┬──────────┬───────┬────────────┬──────────╮
+│ Time     │ Task              │ Pet      │   Min │ Priority   │ Status   │
+├──────────┼───────────────────┼──────────┼───────┼────────────┼──────────┤
+│ 07:30    │ 🦮 Morning walk   │ 🐶 Mochi │    30 │ 🔴 high    │ ⏳ to do │
+│ 08:00    │ 💊 Heartworm meds │ 🐶 Mochi │     5 │ 🔴 high    │ ⏳ to do │
+│ 08:15    │ 🍖 Breakfast      │ 🐶 Mochi │    10 │ 🔴 high    │ ⏳ to do │
+│ 08:15    │ 🍖 Breakfast      │ 🐱 Luna  │    10 │ 🔴 high    │ ⏳ to do │
+│ 20:00    │ 💊 Evening meds   │ 🐱 Luna  │     5 │ 🔴 high    │ ⏳ to do │
+│ 08:20    │ 🧹 Litter box     │ 🐱 Luna  │     5 │ 🟡 medium  │ ⏳ to do │
+│ 12:00    │ 🧼 Brush coat     │ 🐱 Luna  │    20 │ 🟡 medium  │ ⏳ to do │
+│ 17:00    │ 🧸 Puzzle toy     │ 🐶 Mochi │    15 │ 🟡 medium  │ ⏳ to do │
+│ 07:00    │ 🧼 Brush teeth    │ 🐶 Mochi │     5 │ 🟢 low     │ ⏳ to do │
+│ any time │ 🛁 Bath           │ 🐶 Mochi │    45 │ 🟢 low     │ ⏳ to do │
+╰──────────┴───────────────────┴──────────┴───────┴────────────┴──────────╯
 ```
 
 **How this changes the plan.** `generate_plan()` picks tasks in `sort_by_priority()` order until the owner's minutes run out. With the same tasks and only 25 minutes, all the high-priority tasks are considered first, earliest first. The 30-minute walk doesn't fit, but the 10-minute breakfasts and the 20:00 Evening meds do. The early, low-priority Brush teeth is skipped even though it comes first in the day. Litter box (medium) is skipped too, because the high tasks used every minute:
 
 ```
-============================================================
-Tight day: same tasks, only 25 minutes
-============================================================
-Choosing order: Morning walk (Mochi, high), Breakfast (Mochi, high), Breakfast (Luna, high), Evening meds (Luna, high), Litter box (Luna, medium), Brush coat (Luna, medium), Puzzle toy (Mochi, medium), Brush teeth (Mochi, low), Bath (Mochi, low)
-Plan for 2026-10-18 (25 min scheduled)
-  08:15-08:25  Breakfast for Mochi (10 min, high): high priority, fixed time
-  08:15-08:25  Breakfast for Luna (10 min, high): high priority, fixed time
-  20:00-20:05  Evening meds for Luna (5 min, high): high priority, fixed time
-Skipped:
-  Morning walk for Mochi: not enough time (30 min needed, 25 min left)
-  Litter box for Luna: not enough time (5 min needed, 0 min left)
-  Brush coat for Luna: not enough time (20 min needed, 0 min left)
-  Puzzle toy for Mochi: not enough time (15 min needed, 0 min left)
-  Brush teeth for Mochi: not enough time (5 min needed, 0 min left)
-  Bath for Mochi: not enough time (45 min needed, 0 min left)
-Warnings:
-  Breakfast for Mochi (08:15-08:25) overlaps Breakfast for Luna (08:15-08:25); different pets
+════════════════════════════════════════════════════════════
+  Tight day: same tasks, only 25 minutes
+════════════════════════════════════════════════════════════
+Choosing order (priority, then time):
+  1. 🦮 Morning walk (Mochi, high)
+  2. 🍖 Breakfast (Mochi, high)
+  3. 🍖 Breakfast (Luna, high)
+  4. 💊 Evening meds (Luna, high)
+  5. 🧹 Litter box (Luna, medium)
+  6. 🧼 Brush coat (Luna, medium)
+  7. 🧸 Puzzle toy (Mochi, medium)
+  8. 🧼 Brush teeth (Mochi, low)
+  9. 🛁 Bath (Mochi, low)
+📅 Plan for Sunday, October 18: 25 of 25 min scheduled
+╭───────────────┬─────────────────┬──────────┬───────┬────────────┬───────────────────────────╮
+│ Time          │ Task            │ Pet      │   Min │ Priority   │ Why                       │
+├───────────────┼─────────────────┼──────────┼───────┼────────────┼───────────────────────────┤
+│ ⚠ 08:15-08:25 │ 🍖 Breakfast    │ 🐶 Mochi │    10 │ 🔴 high    │ high priority, fixed time │
+│ ⚠ 08:15-08:25 │ 🍖 Breakfast    │ 🐱 Luna  │    10 │ 🔴 high    │ high priority, fixed time │
+│ 20:00-20:05   │ 💊 Evening meds │ 🐱 Luna  │     5 │ 🔴 high    │ high priority, fixed time │
+╰───────────────┴─────────────────┴──────────┴───────┴────────────┴───────────────────────────╯
+Didn't fit (6):
+╭─────────────────┬──────────┬────────────┬──────────────────────────────────────────────╮
+│ Task            │ Pet      │ Priority   │ Reason                                       │
+├─────────────────┼──────────┼────────────┼──────────────────────────────────────────────┤
+│ 🦮 Morning walk │ 🐶 Mochi │ 🔴 high    │ not enough time (30 min needed, 25 min left) │
+│ 🧹 Litter box   │ 🐱 Luna  │ 🟡 medium  │ not enough time (5 min needed, 0 min left)   │
+│ 🧼 Brush coat   │ 🐱 Luna  │ 🟡 medium  │ not enough time (20 min needed, 0 min left)  │
+│ 🧸 Puzzle toy   │ 🐶 Mochi │ 🟡 medium  │ not enough time (15 min needed, 0 min left)  │
+│ 🧼 Brush teeth  │ 🐶 Mochi │ 🟢 low     │ not enough time (5 min needed, 0 min left)   │
+│ 🛁 Bath         │ 🐶 Mochi │ 🟢 low     │ not enough time (45 min needed, 0 min left)  │
+╰─────────────────┴──────────┴────────────┴──────────────────────────────────────────────╯
+⚠ 1 warning:
+  • Breakfast for Mochi (08:15-08:25) overlaps Breakfast for Luna (08:15-08:25); different pets
 ```
 
 Before this change, ties within a priority were broken by *part of the day* (morning, afternoon, evening, none) rather than by clock time, so a fixed 07:00 high-priority task was considered after a flexible morning one. With a 30-minute budget, a 30-minute morning walk then pushed out 07:00 medication. Now the earlier task wins (tested in `test_tight_budget_keeps_the_earliest_task_within_the_same_priority`).
@@ -253,10 +286,85 @@ scheduler.find_next_slot(plan, 20, earliest="09:00") # first one at 09:00 or lat
 Marks a task done and adds its next occurrence to the same pet:
 
 1. `Task.mark_complete(day)` sets `completed` and `last_completed`, then calls `Task.next_occurrence(day)`.
-2. `next_occurrence` returns a copy of the task with the same details, not completed, and `due_date = day + timedelta(days=1)` for daily tasks or `day + timedelta(weeks=1)` for weekly tasks. `timedelta` handles month and year boundaries (10/30 + 1 week = 11/06).
+2. `next_occurrence` returns a copy of the task with the same details, not completed, due on the **next date of its schedule strictly after the completion day**:
+   - the **anchor** is the task's current `due_date` (or the completion day, for a task that never had one), and `gap` is 1 day or 1 week;
+   - `reference = max(completion day, anchor)`, so early completion counts as doing the anchored occurrence;
+   - `due_date = anchor + k × gap`, with `k = (reference − anchor) // gap + 1`.
+
+   A Saturday task done Monday comes back on Saturday (not Monday), one done three weeks late gets a single copy due next Saturday, and one done early isn't due twice in the same week. `timedelta` handles month and year boundaries (10/30 + 1 week = 11/06). This algorithm was chosen by comparing answers from two models; see the Prompt Comparison in [`ai_interactions.md`](ai_interactions.md).
 3. `Task.is_due_today(day)` returns `True` only when the task isn't completed and its `due_date` has arrived, so tomorrow's copy stays out of today's plan.
 
 Completed tasks stay in the pet's list as history. `Pet.find_task()` picks the open copy first, and `mark_task_complete` refuses to complete a task that isn't due yet, so completing twice in one day can't skip ahead.
+
+## 🎨 Output Formatting
+
+Both the terminal demo and the Streamlit app use the helpers in [`pawpal_format.py`](pawpal_format.py), so a task looks the same everywhere. The module only formats; it never changes how tasks are scheduled.
+
+### What was added
+
+| Feature | Where | How it works |
+|---------|-------|--------------|
+| **Emojis for task types** | CLI + app | `task_icon(task)` checks the task title for keywords (case-insensitive): 💊 meds/medication/vet, 🦮 walk/run/hike, 🍖 breakfast/dinner/feed/snack, 🛁 bath, 🧼 brush/groom/nail/teeth/coat, 🧹 litter/clean, 🧸 play/toy/puzzle/train, and 🐾 for anything else. `task_label(task)` returns the title with its icon, e.g. "💊 Heartworm meds". |
+| **Pet species icons** | CLI + app | `species_icon(species)`: 🐶 dog, 🐱 cat, 🐾 other. `pet_label()` returns "🐶 Mochi". |
+| **Color-coded priority** | CLI + app | `priority_label(priority, color)` returns 🔴 high, 🟡 medium or 🟢 low. In a terminal the text is also red, yellow or green. |
+| **Status indicators** | CLI + app | `status_label(task, scheduler, color)` returns ✅ done *date* (green), 🔁 due *date* for a future occurrence (cyan), or ⏳ to do. |
+| **CLI tables** | CLI | `task_table()`, `plan_report()` and `moves_table()` build tables with **tabulate** (`rounded_outline` style). `plan_report()` adds a 📅 summary line, marks clashing times with ⚠ in yellow, lists tasks that didn't fit in their own table with the reason dimmed, and ends with either the warnings or ✅ No time clashes. |
+| **Terminal colors** | CLI | `paint(text, color)` wraps text in ANSI color codes. `use_color()` turns color on only when output goes to a real terminal and the [`NO_COLOR`](https://no-color.org) variable isn't set, so piped output, like the samples in this README, stays plain text. |
+| **Tinted table cells** | App | `cell_style(value)` returns a CSS background for priority and status cells: red/yellow/green for priority, green for done, blue for due. `app.py` applies it with pandas `Styler.map()` before `st.table()`. The tints are semi-transparent, so they work in light and dark themes. |
+| **Emojis in app lists** | App | The **Mark a task done** list, the suggested-fix lines, and the "Didn't fit today" box use the same task icons and priority badges. |
+
+### Libraries used
+
+- **[tabulate](https://pypi.org/project/tabulate/)** (`tabulate>=0.9`) draws the CLI tables. It skips ANSI color codes when measuring columns, so colored cells still line up.
+- **[wcwidth](https://pypi.org/project/wcwidth/)** (`wcwidth>=0.2`) tells tabulate that emojis take two columns on screen. Without it, every row with an emoji would be misaligned. The icons were also chosen to avoid emojis that need an invisible "variation selector" (for example 🍖 instead of 🍽️), because terminals measure those inconsistently.
+- **pandas** `Styler` (installed with Streamlit; `pandas>=2.1` for `Styler.map`) tints the app's table cells.
+- **ANSI escape codes** (no library) color the terminal text.
+
+Install them with `pip install -r requirements.txt`. `tests/test_format.py` checks the icons, labels and color switching, that every row of a CLI table has the same on-screen width with and without color, and that the pandas tint is applied.
+
+### Example: today's plan in the terminal
+
+```
+════════════════════════════════════════════════════════════
+  Today's Schedule for Jordan's pets
+════════════════════════════════════════════════════════════
+📅 Plan for Sunday, October 18: 85 of 90 min scheduled
+╭───────────────┬─────────────────┬──────────┬───────┬────────────┬────────────────────────────────────╮
+│ Time          │ Task            │ Pet      │   Min │ Priority   │ Why                                │
+├───────────────┼─────────────────┼──────────┼───────┼────────────┼────────────────────────────────────┤
+│ 07:00-07:05   │ 🧼 Brush teeth  │ 🐶 Mochi │     5 │ 🟢 low     │ low priority, fixed time           │
+│ 07:30-08:00   │ 🦮 Morning walk │ 🐶 Mochi │    30 │ 🔴 high    │ high priority, prefers morning     │
+│ ⚠ 08:15-08:25 │ 🍖 Breakfast    │ 🐶 Mochi │    10 │ 🔴 high    │ high priority, fixed time          │
+│ ⚠ 08:15-08:25 │ 🍖 Breakfast    │ 🐱 Luna  │    10 │ 🔴 high    │ high priority, fixed time          │
+│ ⚠ 08:20-08:25 │ 🧹 Litter box   │ 🐱 Luna  │     5 │ 🟡 medium  │ medium priority, fixed time        │
+│ 12:00-12:20   │ 🧼 Brush coat   │ 🐱 Luna  │    20 │ 🟡 medium  │ medium priority, prefers afternoon │
+│ 20:00-20:05   │ 💊 Evening meds │ 🐱 Luna  │     5 │ 🔴 high    │ high priority, fixed time          │
+╰───────────────┴─────────────────┴──────────┴───────┴────────────┴────────────────────────────────────╯
+Didn't fit (2):
+╭───────────────┬──────────┬────────────┬──────────────────────────────────────────────╮
+│ Task          │ Pet      │ Priority   │ Reason                                       │
+├───────────────┼──────────┼────────────┼──────────────────────────────────────────────┤
+│ 🧸 Puzzle toy │ 🐶 Mochi │ 🟡 medium  │ not enough time (15 min needed, 10 min left) │
+│ 🛁 Bath       │ 🐶 Mochi │ 🟢 low     │ not enough time (45 min needed, 5 min left)  │
+╰───────────────┴──────────┴────────────┴──────────────────────────────────────────────╯
+⚠ 3 warnings:
+  • Breakfast for Mochi (08:15-08:25) overlaps Breakfast for Luna (08:15-08:25); different pets
+  • Breakfast for Mochi (08:15-08:25) overlaps Litter box for Luna (08:20-08:25); different pets
+  • Breakfast for Luna (08:15-08:25) overlaps Litter box for Luna (08:20-08:25); both for Luna
+```
+
+```
+💡 Suggested fix for the clashes:
+╭───────────────┬─────────┬────────┬───────╮
+│ Task          │ Pet     │ From   │ To    │
+├───────────────┼─────────┼────────┼───────┤
+│ 🍖 Breakfast  │ 🐱 Luna │ 08:15  │ 08:25 │
+│ 🧹 Litter box │ 🐱 Luna │ 08:20  │ 08:35 │
+╰───────────────┴─────────┴────────┴───────╯
+🕒 Next free 20-minute slot after 09:00: 09:00
+```
+
+In a terminal, the priorities are also colored (🔴 red, 🟡 yellow, 🟢 green), ⚠ clash times and warnings are yellow, ✅ is green, and the "not enough time" reasons are dimmed. Run `NO_COLOR=1 python main.py` to turn colors off.
 
 ## 💾 Data Persistence
 
@@ -355,7 +463,7 @@ Start the app with `streamlit run app.py`, or run the terminal demo with `python
 |---------|---------|
 | **Owner** | Set your name, how many minutes you have for pet care today, and when your day starts. |
 | **Pets** | Add a pet with a name and species (dog, cat, other). A table lists each pet and how many tasks it has. Duplicate names are refused. |
-| **Tasks** | Add a task for a pet with a title, duration, priority, preferred time (any/morning/afternoon/evening) and frequency (daily/weekly), and optionally pin it to a fixed time. **Mark a task done** from a list of today's tasks. The task table can be sorted by **Time** or **Priority, then time**, and filtered by pet and by All / To do / Done. Priorities show as 🔴 high, 🟡 medium and 🟢 low. |
+| **Tasks** | Add a task for a pet with a title, duration, priority, preferred time (any/morning/afternoon/evening) and frequency (daily/weekly), and optionally pin it to a fixed time. **Mark a task done** from a list of today's tasks. The task table can be sorted by **Time** or **Priority, then time**, and filtered by pet and by All / To do / Done. Priorities show as 🔴 high, 🟡 medium and 🟢 low, statuses as ✅ done, 🔁 due or ⏳ to do, and each task and pet gets an icon (💊 Heartworm meds, 🐶 Mochi). |
 | **Build Schedule** | **Generate schedule** builds today's plan: a summary message, any time clashes with a **Suggested fix** and an **Apply suggested times** button, the schedule table with a reason for each task, tasks that didn't fit, a **Find a free time slot** helper (minutes needed + no earlier than → next free slot), and a plain-text version of the plan. The plan stays on screen and updates as you add or complete tasks. |
 
 ### Example workflow
@@ -374,13 +482,13 @@ Start the app with `streamlit run app.py`, or run the terminal demo with `python
    | Mochi | Bath | 45 | low | any time |
 
    The task table sorts them by time, whatever order you added them in: Walk 08:00, the two Breakfasts at 08:15, Litter box 08:20, Brush coat 12:00, and Bath ("any time") last.
-4. **Complete a task.** Under **Mark a task done**, choose *Walk (Mochi)* and click **Mark done**. The app shows *"Done: Walk for Mochi. Next one (daily) is due Mon Oct 19."* The table now has two Walk rows: **✅ done Oct 18** and **🔁 due Oct 19**. Set the filter to **Done** to see only the finished walk.
+4. **Complete a task.** Under **Mark a task done**, choose *🦮 Walk (Mochi)* and click **Mark done**. The app shows *"Done: Walk for Mochi. Next one (daily) is due Mon Oct 19."* The table now has two Walk rows: **✅ done Oct 18** and **🔁 due Oct 19**. Set the filter to **Done** to see only the finished walk.
 5. **Generate today's schedule.** Click **Generate schedule**:
    - A yellow summary: *"Scheduled 4 tasks (45 of 60 min), but some times need your attention."*
    - A **⚠️ 3 time clashes** box, one line per clash, for example: *"08:20: Litter box (Luna) overlaps Breakfast (Luna) by 5 min; Luna can't do both at once."*
-   - A **💡 Suggested fix** box: *"Move Breakfast (Luna) from 08:15 to 08:25"* and *"Move Litter box (Luna) from 08:20 to 08:35"*. Mochi's Breakfast stays put, and the two new times don't clash with each other.
+   - A **💡 Suggested fix** box: *"Move 🍖 Breakfast (Luna) from 08:15 to 08:25"* and *"Move 🧹 Litter box (Luna) from 08:20 to 08:35"*. Mochi's Breakfast stays put, and the two new times don't clash with each other.
    - The schedule table: Breakfast (Mochi) ⚠️ 08:15, Breakfast (Luna) ⚠️ 08:15, Litter box ⚠️ 08:20, Brush coat 12:00 ("medium priority, prefers afternoon").
-   - A **Didn't fit today** box: *"Bath (Mochi): not enough time (45 min needed, 15 min left)"*.
+   - A **Didn't fit today** box: *"🛁 Bath (Mochi, 🟢 low): not enough time (45 min needed, 15 min left)"*.
 6. **Adjust the plan.** Raise **Minutes available today** to 90. The plan updates right away: Bath now fits and is placed at 12:20-13:05, after Brush coat. Then click **Apply suggested times**. Luna's Breakfast moves to 08:25-08:35 and the Litter box to 08:35-08:40, the ⚠️ marks disappear, and the summary turns green: *"Scheduled 5 tasks (90 of 90 min) with no time clashes."*
 7. **Find free time.** Open **Find a free time slot**. With the default 15 minutes from 08:00, it answers *"Next free 15-minute slot: 08:00-08:15"*, the gap before Mochi's Breakfast.
 8. **Close and reopen.** Stop the app and run `streamlit run app.py` again. A *"Loaded your pets and tasks from data.json."* message appears, and Mochi, Luna, all their tasks (with Walk still ✅ done and 🔁 due tomorrow) and the 90 minutes are back. Click **Start over** in the sidebar to clear everything.
@@ -393,6 +501,7 @@ Start the app with `streamlit run app.py`, or run the terminal demo with `python
 - **Priority-based scheduling:** switch **Sort by** to *Priority, then time* to see the order the planner uses. With 60 minutes, the high and medium tasks fit first and the low-priority Bath is skipped with a reason.
 - **Time-of-day placement:** Brush coat waits until 12:00 because it prefers the afternoon.
 - **Conflict warnings:** overlaps between the same pet and different pets are both flagged.
+- **Readable output:** 🔴/🟡/🟢 priorities, ✅/🔁/⏳ statuses and task-type icons (💊 🦮 🍖 🛁 🧼 🧹 🧸) in every table, with tinted priority and status cells.
 - **Data persistence:** everything is saved to `data.json` and comes back when the app is reopened.
 - **Next available slot:** `suggest_moves()` offers clash-free new times that keep the higher-priority task in place, and `find_next_slot()` answers "when am I next free for N minutes?".
 
@@ -402,99 +511,152 @@ Start the app with `streamlit run app.py`, or run the terminal demo with `python
 
 ```
 Unsorted (each pet's tasks in the order added):
-  17:00     Puzzle toy      Mochi  medium  to do
-  any time  Bath            Mochi  low     to do
-  08:00     Heartworm meds  Mochi  high    to do
-  07:30     Morning walk    Mochi  high    to do
-  07:00     Brush teeth     Mochi  low     to do
-  08:15     Breakfast       Mochi  high    to do
-  08:15     Breakfast       Luna   high    to do
-  12:00     Brush coat      Luna   medium  to do
-  20:00     Evening meds    Luna   high    to do
-  08:20     Litter box      Luna   medium  to do
+╭──────────┬───────────────────┬──────────┬───────┬────────────┬──────────╮
+│ Time     │ Task              │ Pet      │   Min │ Priority   │ Status   │
+├──────────┼───────────────────┼──────────┼───────┼────────────┼──────────┤
+│ 17:00    │ 🧸 Puzzle toy     │ 🐶 Mochi │    15 │ 🟡 medium  │ ⏳ to do │
+│ any time │ 🛁 Bath           │ 🐶 Mochi │    45 │ 🟢 low     │ ⏳ to do │
+│ 08:00    │ 💊 Heartworm meds │ 🐶 Mochi │     5 │ 🔴 high    │ ⏳ to do │
+│ 07:30    │ 🦮 Morning walk   │ 🐶 Mochi │    30 │ 🔴 high    │ ⏳ to do │
+│ 07:00    │ 🧼 Brush teeth    │ 🐶 Mochi │     5 │ 🟢 low     │ ⏳ to do │
+│ 08:15    │ 🍖 Breakfast      │ 🐶 Mochi │    10 │ 🔴 high    │ ⏳ to do │
+│ 08:15    │ 🍖 Breakfast      │ 🐱 Luna  │    10 │ 🔴 high    │ ⏳ to do │
+│ 12:00    │ 🧼 Brush coat     │ 🐱 Luna  │    20 │ 🟡 medium  │ ⏳ to do │
+│ 20:00    │ 💊 Evening meds   │ 🐱 Luna  │     5 │ 🔴 high    │ ⏳ to do │
+│ 08:20    │ 🧹 Litter box     │ 🐱 Luna  │     5 │ 🟡 medium  │ ⏳ to do │
+╰──────────┴───────────────────┴──────────┴───────┴────────────┴──────────╯
 
 Sorted by time:
-  07:00     Brush teeth     Mochi  low     to do
-  07:30     Morning walk    Mochi  high    to do
-  08:00     Heartworm meds  Mochi  high    to do
-  08:15     Breakfast       Mochi  high    to do
-  08:15     Breakfast       Luna   high    to do
-  08:20     Litter box      Luna   medium  to do
-  12:00     Brush coat      Luna   medium  to do
-  17:00     Puzzle toy      Mochi  medium  to do
-  20:00     Evening meds    Luna   high    to do
-  any time  Bath            Mochi  low     to do
+╭──────────┬───────────────────┬──────────┬───────┬────────────┬──────────╮
+│ Time     │ Task              │ Pet      │   Min │ Priority   │ Status   │
+├──────────┼───────────────────┼──────────┼───────┼────────────┼──────────┤
+│ 07:00    │ 🧼 Brush teeth    │ 🐶 Mochi │     5 │ 🟢 low     │ ⏳ to do │
+│ 07:30    │ 🦮 Morning walk   │ 🐶 Mochi │    30 │ 🔴 high    │ ⏳ to do │
+│ 08:00    │ 💊 Heartworm meds │ 🐶 Mochi │     5 │ 🔴 high    │ ⏳ to do │
+│ 08:15    │ 🍖 Breakfast      │ 🐶 Mochi │    10 │ 🔴 high    │ ⏳ to do │
+│ 08:15    │ 🍖 Breakfast      │ 🐱 Luna  │    10 │ 🔴 high    │ ⏳ to do │
+│ 08:20    │ 🧹 Litter box     │ 🐱 Luna  │     5 │ 🟡 medium  │ ⏳ to do │
+│ 12:00    │ 🧼 Brush coat     │ 🐱 Luna  │    20 │ 🟡 medium  │ ⏳ to do │
+│ 17:00    │ 🧸 Puzzle toy     │ 🐶 Mochi │    15 │ 🟡 medium  │ ⏳ to do │
+│ 20:00    │ 💊 Evening meds   │ 🐱 Luna  │     5 │ 🔴 high    │ ⏳ to do │
+│ any time │ 🛁 Bath           │ 🐶 Mochi │    45 │ 🟢 low     │ ⏳ to do │
+╰──────────┴───────────────────┴──────────┴───────┴────────────┴──────────╯
 
 Sorted by priority, then time:
-  07:30     Morning walk    Mochi  high    to do
-  08:00     Heartworm meds  Mochi  high    to do
-  08:15     Breakfast       Mochi  high    to do
-  08:15     Breakfast       Luna   high    to do
-  20:00     Evening meds    Luna   high    to do
-  08:20     Litter box      Luna   medium  to do
-  12:00     Brush coat      Luna   medium  to do
-  17:00     Puzzle toy      Mochi  medium  to do
-  07:00     Brush teeth     Mochi  low     to do
-  any time  Bath            Mochi  low     to do
+╭──────────┬───────────────────┬──────────┬───────┬────────────┬──────────╮
+│ Time     │ Task              │ Pet      │   Min │ Priority   │ Status   │
+├──────────┼───────────────────┼──────────┼───────┼────────────┼──────────┤
+│ 07:30    │ 🦮 Morning walk   │ 🐶 Mochi │    30 │ 🔴 high    │ ⏳ to do │
+│ 08:00    │ 💊 Heartworm meds │ 🐶 Mochi │     5 │ 🔴 high    │ ⏳ to do │
+│ 08:15    │ 🍖 Breakfast      │ 🐶 Mochi │    10 │ 🔴 high    │ ⏳ to do │
+│ 08:15    │ 🍖 Breakfast      │ 🐱 Luna  │    10 │ 🔴 high    │ ⏳ to do │
+│ 20:00    │ 💊 Evening meds   │ 🐱 Luna  │     5 │ 🔴 high    │ ⏳ to do │
+│ 08:20    │ 🧹 Litter box     │ 🐱 Luna  │     5 │ 🟡 medium  │ ⏳ to do │
+│ 12:00    │ 🧼 Brush coat     │ 🐱 Luna  │    20 │ 🟡 medium  │ ⏳ to do │
+│ 17:00    │ 🧸 Puzzle toy     │ 🐶 Mochi │    15 │ 🟡 medium  │ ⏳ to do │
+│ 07:00    │ 🧼 Brush teeth    │ 🐶 Mochi │     5 │ 🟢 low     │ ⏳ to do │
+│ any time │ 🛁 Bath           │ 🐶 Mochi │    45 │ 🟢 low     │ ⏳ to do │
+╰──────────┴───────────────────┴──────────┴───────┴────────────┴──────────╯
 
 Only Luna's tasks:
-  08:15     Breakfast       Luna   high    to do
-  12:00     Brush coat      Luna   medium  to do
-  20:00     Evening meds    Luna   high    to do
-  08:20     Litter box      Luna   medium  to do
+╭────────┬─────────────────┬─────────┬───────┬────────────┬──────────╮
+│ Time   │ Task            │ Pet     │   Min │ Priority   │ Status   │
+├────────┼─────────────────┼─────────┼───────┼────────────┼──────────┤
+│ 08:15  │ 🍖 Breakfast    │ 🐱 Luna │    10 │ 🔴 high    │ ⏳ to do │
+│ 12:00  │ 🧼 Brush coat   │ 🐱 Luna │    20 │ 🟡 medium  │ ⏳ to do │
+│ 20:00  │ 💊 Evening meds │ 🐱 Luna │     5 │ 🔴 high    │ ⏳ to do │
+│ 08:20  │ 🧹 Litter box   │ 🐱 Luna │     5 │ 🟡 medium  │ ⏳ to do │
+╰────────┴─────────────────┴─────────┴───────┴────────────┴──────────╯
 
-Marked Heartworm meds done; next one (daily) is due 2026-10-19.
+✅ Marked Heartworm meds done; next one (daily) is due Mon Oct 19.
 
 Completed tasks:
-  08:00     Heartworm meds  Mochi  high    done 2026-10-18
+╭────────┬───────────────────┬──────────┬───────┬────────────┬────────────────╮
+│ Time   │ Task              │ Pet      │   Min │ Priority   │ Status         │
+├────────┼───────────────────┼──────────┼───────┼────────────┼────────────────┤
+│ 08:00  │ 💊 Heartworm meds │ 🐶 Mochi │     5 │ 🔴 high    │ ✅ done Oct 18 │
+╰────────┴───────────────────┴──────────┴───────┴────────────┴────────────────╯
 
 Mochi's tasks still to do, sorted by time:
-  07:00     Brush teeth     Mochi  low     to do
-  07:30     Morning walk    Mochi  high    to do
-  08:00     Heartworm meds  Mochi  high    due 2026-10-19
-  08:15     Breakfast       Mochi  high    to do
-  17:00     Puzzle toy      Mochi  medium  to do
-  any time  Bath            Mochi  low     to do
+╭──────────┬───────────────────┬──────────┬───────┬────────────┬───────────────╮
+│ Time     │ Task              │ Pet      │   Min │ Priority   │ Status        │
+├──────────┼───────────────────┼──────────┼───────┼────────────┼───────────────┤
+│ 07:00    │ 🧼 Brush teeth    │ 🐶 Mochi │     5 │ 🟢 low     │ ⏳ to do      │
+│ 07:30    │ 🦮 Morning walk   │ 🐶 Mochi │    30 │ 🔴 high    │ ⏳ to do      │
+│ 08:00    │ 💊 Heartworm meds │ 🐶 Mochi │     5 │ 🔴 high    │ 🔁 due Oct 19 │
+│ 08:15    │ 🍖 Breakfast      │ 🐶 Mochi │    10 │ 🔴 high    │ ⏳ to do      │
+│ 17:00    │ 🧸 Puzzle toy     │ 🐶 Mochi │    15 │ 🟡 medium  │ ⏳ to do      │
+│ any time │ 🛁 Bath           │ 🐶 Mochi │    45 │ 🟢 low     │ ⏳ to do      │
+╰──────────┴───────────────────┴──────────┴───────┴────────────┴───────────────╯
 
-============================================================
-Today's Schedule for Jordan's pets
-============================================================
-Plan for 2026-10-18 (85 min scheduled)
-  07:00-07:05  Brush teeth for Mochi (5 min, low): low priority, fixed time
-  07:30-08:00  Morning walk for Mochi (30 min, high): high priority, prefers morning
-  08:15-08:25  Breakfast for Mochi (10 min, high): high priority, fixed time
-  08:15-08:25  Breakfast for Luna (10 min, high): high priority, fixed time
-  08:20-08:25  Litter box for Luna (5 min, medium): medium priority, fixed time
-  12:00-12:20  Brush coat for Luna (20 min, medium): medium priority, prefers afternoon
-  20:00-20:05  Evening meds for Luna (5 min, high): high priority, fixed time
-Skipped:
-  Puzzle toy for Mochi: not enough time (15 min needed, 10 min left)
-  Bath for Mochi: not enough time (45 min needed, 5 min left)
-Warnings:
-  Breakfast for Mochi (08:15-08:25) overlaps Breakfast for Luna (08:15-08:25); different pets
-  Breakfast for Mochi (08:15-08:25) overlaps Litter box for Luna (08:20-08:25); different pets
-  Breakfast for Luna (08:15-08:25) overlaps Litter box for Luna (08:20-08:25); both for Luna
+════════════════════════════════════════════════════════════
+  Today's Schedule for Jordan's pets
+════════════════════════════════════════════════════════════
+📅 Plan for Sunday, October 18: 85 of 90 min scheduled
+╭───────────────┬─────────────────┬──────────┬───────┬────────────┬────────────────────────────────────╮
+│ Time          │ Task            │ Pet      │   Min │ Priority   │ Why                                │
+├───────────────┼─────────────────┼──────────┼───────┼────────────┼────────────────────────────────────┤
+│ 07:00-07:05   │ 🧼 Brush teeth  │ 🐶 Mochi │     5 │ 🟢 low     │ low priority, fixed time           │
+│ 07:30-08:00   │ 🦮 Morning walk │ 🐶 Mochi │    30 │ 🔴 high    │ high priority, prefers morning     │
+│ ⚠ 08:15-08:25 │ 🍖 Breakfast    │ 🐶 Mochi │    10 │ 🔴 high    │ high priority, fixed time          │
+│ ⚠ 08:15-08:25 │ 🍖 Breakfast    │ 🐱 Luna  │    10 │ 🔴 high    │ high priority, fixed time          │
+│ ⚠ 08:20-08:25 │ 🧹 Litter box   │ 🐱 Luna  │     5 │ 🟡 medium  │ medium priority, fixed time        │
+│ 12:00-12:20   │ 🧼 Brush coat   │ 🐱 Luna  │    20 │ 🟡 medium  │ medium priority, prefers afternoon │
+│ 20:00-20:05   │ 💊 Evening meds │ 🐱 Luna  │     5 │ 🔴 high    │ high priority, fixed time          │
+╰───────────────┴─────────────────┴──────────┴───────┴────────────┴────────────────────────────────────╯
+Didn't fit (2):
+╭───────────────┬──────────┬────────────┬──────────────────────────────────────────────╮
+│ Task          │ Pet      │ Priority   │ Reason                                       │
+├───────────────┼──────────┼────────────┼──────────────────────────────────────────────┤
+│ 🧸 Puzzle toy │ 🐶 Mochi │ 🟡 medium  │ not enough time (15 min needed, 10 min left) │
+│ 🛁 Bath       │ 🐶 Mochi │ 🟢 low     │ not enough time (45 min needed, 5 min left)  │
+╰───────────────┴──────────┴────────────┴──────────────────────────────────────────────╯
+⚠ 3 warnings:
+  • Breakfast for Mochi (08:15-08:25) overlaps Breakfast for Luna (08:15-08:25); different pets
+  • Breakfast for Mochi (08:15-08:25) overlaps Litter box for Luna (08:20-08:25); different pets
+  • Breakfast for Luna (08:15-08:25) overlaps Litter box for Luna (08:20-08:25); both for Luna
 
-Suggested fix for the clashes:
-  Move Breakfast for Luna from 08:15 to 08:25
-  Move Litter box for Luna from 08:20 to 08:35
-Next free 20-minute slot after 09:00: 09:00
+💡 Suggested fix for the clashes:
+╭───────────────┬─────────┬────────┬───────╮
+│ Task          │ Pet     │ From   │ To    │
+├───────────────┼─────────┼────────┼───────┤
+│ 🍖 Breakfast  │ 🐱 Luna │ 08:15  │ 08:25 │
+│ 🧹 Litter box │ 🐱 Luna │ 08:20  │ 08:35 │
+╰───────────────┴─────────┴────────┴───────╯
+🕒 Next free 20-minute slot after 09:00: 09:00
 
-============================================================
-Tight day: same tasks, only 25 minutes
-============================================================
-Choosing order: Morning walk (Mochi, high), Breakfast (Mochi, high), Breakfast (Luna, high), Evening meds (Luna, high), Litter box (Luna, medium), Brush coat (Luna, medium), Puzzle toy (Mochi, medium), Brush teeth (Mochi, low), Bath (Mochi, low)
-Plan for 2026-10-18 (25 min scheduled)
-  08:15-08:25  Breakfast for Mochi (10 min, high): high priority, fixed time
-  08:15-08:25  Breakfast for Luna (10 min, high): high priority, fixed time
-  20:00-20:05  Evening meds for Luna (5 min, high): high priority, fixed time
-Skipped:
-  Morning walk for Mochi: not enough time (30 min needed, 25 min left)
-  Litter box for Luna: not enough time (5 min needed, 0 min left)
-  Brush coat for Luna: not enough time (20 min needed, 0 min left)
-  Puzzle toy for Mochi: not enough time (15 min needed, 0 min left)
-  Brush teeth for Mochi: not enough time (5 min needed, 0 min left)
-  Bath for Mochi: not enough time (45 min needed, 0 min left)
-Warnings:
-  Breakfast for Mochi (08:15-08:25) overlaps Breakfast for Luna (08:15-08:25); different pets
+════════════════════════════════════════════════════════════
+  Tight day: same tasks, only 25 minutes
+════════════════════════════════════════════════════════════
+Choosing order (priority, then time):
+  1. 🦮 Morning walk (Mochi, high)
+  2. 🍖 Breakfast (Mochi, high)
+  3. 🍖 Breakfast (Luna, high)
+  4. 💊 Evening meds (Luna, high)
+  5. 🧹 Litter box (Luna, medium)
+  6. 🧼 Brush coat (Luna, medium)
+  7. 🧸 Puzzle toy (Mochi, medium)
+  8. 🧼 Brush teeth (Mochi, low)
+  9. 🛁 Bath (Mochi, low)
+📅 Plan for Sunday, October 18: 25 of 25 min scheduled
+╭───────────────┬─────────────────┬──────────┬───────┬────────────┬───────────────────────────╮
+│ Time          │ Task            │ Pet      │   Min │ Priority   │ Why                       │
+├───────────────┼─────────────────┼──────────┼───────┼────────────┼───────────────────────────┤
+│ ⚠ 08:15-08:25 │ 🍖 Breakfast    │ 🐶 Mochi │    10 │ 🔴 high    │ high priority, fixed time │
+│ ⚠ 08:15-08:25 │ 🍖 Breakfast    │ 🐱 Luna  │    10 │ 🔴 high    │ high priority, fixed time │
+│ 20:00-20:05   │ 💊 Evening meds │ 🐱 Luna  │     5 │ 🔴 high    │ high priority, fixed time │
+╰───────────────┴─────────────────┴──────────┴───────┴────────────┴───────────────────────────╯
+Didn't fit (6):
+╭─────────────────┬──────────┬────────────┬──────────────────────────────────────────────╮
+│ Task            │ Pet      │ Priority   │ Reason                                       │
+├─────────────────┼──────────┼────────────┼──────────────────────────────────────────────┤
+│ 🦮 Morning walk │ 🐶 Mochi │ 🔴 high    │ not enough time (30 min needed, 25 min left) │
+│ 🧹 Litter box   │ 🐱 Luna  │ 🟡 medium  │ not enough time (5 min needed, 0 min left)   │
+│ 🧼 Brush coat   │ 🐱 Luna  │ 🟡 medium  │ not enough time (20 min needed, 0 min left)  │
+│ 🧸 Puzzle toy   │ 🐶 Mochi │ 🟡 medium  │ not enough time (15 min needed, 0 min left)  │
+│ 🧼 Brush teeth  │ 🐶 Mochi │ 🟢 low     │ not enough time (5 min needed, 0 min left)   │
+│ 🛁 Bath         │ 🐶 Mochi │ 🟢 low     │ not enough time (45 min needed, 0 min left)  │
+╰─────────────────┴──────────┴────────────┴──────────────────────────────────────────────╯
+⚠ 1 warning:
+  • Breakfast for Mochi (08:15-08:25) overlaps Breakfast for Luna (08:15-08:25); different pets
 ```

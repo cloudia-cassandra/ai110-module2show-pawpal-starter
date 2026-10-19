@@ -78,8 +78,18 @@ class Task:
         return not self.completed and (self.due_date is None or self.due_date <= day)
 
     def next_occurrence(self, day: date) -> Task:
-        """Return a fresh copy of this task, due one day (daily) or one week (weekly) after the given day."""
-        return replace(self, due_date=day + RECURRENCE_GAP[self.frequency], completed=False, last_completed=None)
+        """Return a fresh copy of this task, due on the next date of its schedule strictly after the given day.
+
+        The schedule is anchored on the current due date (or on day, for a task with no due date yet), so a
+        weekly task keeps its weekday: done late, early, or weeks overdue, the next copy is due on the next
+        anchored date, never a backlog of overdue copies and never twice in the same week.
+        """
+        gap = RECURRENCE_GAP[self.frequency]
+        anchor = self.due_date if self.due_date is not None else day
+        # Early completion counts as completing the anchored occurrence; late completion skips missed ones.
+        reference = max(day, anchor)
+        steps = (reference - anchor) // gap + 1  # timedelta // timedelta is an exact int
+        return replace(self, due_date=anchor + steps * gap, completed=False, last_completed=None)
 
     def mark_complete(self, day: date) -> Task:
         """Mark this task as done on the given day and return its next occurrence."""
