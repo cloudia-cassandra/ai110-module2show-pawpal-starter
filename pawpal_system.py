@@ -17,17 +17,19 @@ class Task:
     preferred_time: Optional[str] = None  # e.g. "morning", "afternoon", "evening"
     frequency: str = "daily"  # "daily" or "weekly"
     completed: bool = False
+    last_completed: Optional[date] = None
+    pet_name: str = ""  # set by Pet.add_task so the plan can say which pet a task is for
 
     def priority_rank(self) -> int:
         """Return a number for sorting: low=1, medium=2, high=3."""
         pass
 
     def is_due_today(self, day: date) -> bool:
-        """Return True if this task should happen on the given day."""
+        """Return True if this task should happen on the given day (uses frequency and last_completed)."""
         pass
 
-    def mark_complete(self) -> None:
-        """Mark this task as done."""
+    def mark_complete(self, day: date) -> None:
+        """Mark this task as done and remember the day it was completed."""
         pass
 
 
@@ -40,7 +42,7 @@ class Pet:
     tasks: list[Task] = field(default_factory=list)
 
     def add_task(self, task: Task) -> None:
-        """Add a care task for this pet."""
+        """Add a care task for this pet and tag it with this pet's name."""
         pass
 
     def remove_task(self, title: str) -> None:

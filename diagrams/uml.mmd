@@ -25,9 +25,11 @@ classDiagram
         +str preferred_time
         +str frequency
         +bool completed
+        +date last_completed
+        +str pet_name
         +priority_rank() int
         +is_due_today(day: date) bool
-        +mark_complete() None
+        +mark_complete(day: date) None
     }
 
     class Scheduler {
