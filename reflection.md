@@ -53,6 +53,14 @@ Second, when reviewing the class skeleton in `pawpal_system.py`, I found two mis
 - Describe one tradeoff your scheduler makes.
 - Why is that tradeoff reasonable for this scenario?
 
+My scheduler chooses tasks greedily by priority instead of searching for the combination that fills the most time. It sorts tasks from highest to lowest priority and adds each one if it still fits in the owner's remaining minutes. If a task doesn't fit, it is skipped and the scheduler moves on to the next one, so a smaller task further down the list can still fill the gap. This doesn't always use every available minute. For example, with 60 minutes free, a 50-minute high-priority walk, and two 30-minute medium-priority tasks, the scheduler picks the walk and skips both medium tasks. That uses 50 minutes, while the two medium tasks together would have used all 60.
+
+I think this is reasonable for a pet owner, because priority usually means "this matters more", like medication or a dog that needs exercise. Most owners would rather get the important task done than squeeze in more minutes of less important ones. The greedy approach is also easy to explain: every skipped task gets a reason like "not enough time (30 min needed, 10 min left)". A search for the "best" combination would be slower to run and much harder to explain in the plan.
+
+A related tradeoff is that conflicts are reported, not fixed. Flexible tasks are placed around fixed-time tasks, so they never clash. If two fixed-time tasks overlap, though, the scheduler keeps both and adds a warning instead of moving one. It does check real overlaps, not just identical start times, so breakfast at 08:15–08:25 and a litter box at 08:20 are flagged. It leaves the decision to the owner, who knows whether the two tasks can really happen together, for example if another person can feed one pet.
+
+When simplifying the code, I also made a readability tradeoff in `detect_conflicts()`. An earlier version used a "sweep" that tracked which tasks were still running, which does less work on long lists. I replaced it with a simpler check of every pair of tasks using `itertools.combinations`, because a day has only a handful of tasks, so the speed difference doesn't matter, and the pairwise version is much easier to read and check.
+
 ---
 
 ## 3. AI Collaboration
